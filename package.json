@@ -1,0 +1,13 @@
+{
+  "name": "rockettheft",
+  "version": "0.0.1",
+  "license": "GPL-3.0-or-later",
+  "description": "detect and analyse MEV theft by Rocket Pool validators",
+  "type": "module",
+  "dependencies": {
+    "ethers": "6",
+    "commander": "11",
+    "dotenv": "16",
+    "lmdb": "2"
+  }
+}
