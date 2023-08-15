@@ -5,6 +5,8 @@ import { program } from 'commander'
 import { readFileSync, readdirSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 
+const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
+
 program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
        .option('-b, --bn <url>', 'Beacon node API endpoint URL')
        .requiredOption('-s, --slot <num>', 'Slot to print info for')
@@ -16,6 +18,27 @@ const db = open({path: dbDir})
 
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
+
+const nullAddress = '0x0000000000000000000000000000000000000000'
+const rocketStorage = new ethers.Contract(rocketStorageAddress,
+  ['function getAddress(bytes32) view returns (address)'], provider)
+const getRocketAddress = name => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`))
+const rocketMinipoolManager = new ethers.Contract(
+  await getRocketAddress('rocketMinipoolManager'),
+  ['function getMinipoolByPubkey(bytes) view returns (address)'], provider)
+
+async function isRocketPoolValidator(index) {
+  const path = `/eth/v1/beacon/states/finalized/validators/${index}`
+  const url = new URL(path, beaconRpcUrl)
+  const response = await fetch(url)
+  if (response.status !== 200) {
+    console.warn(`Unexpected response status getting ${index} pubkey: ${response.status}`)
+    console.warn(`response text: ${await response.text()}`)
+  }
+  const json = await response.json()
+  const minipool = await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey)
+  return minipool != nullAddress
+}
 
 async function getSlotInfo(slotNumberAny) {
   const slotNumber = parseInt(slotNumberAny)
@@ -50,7 +73,9 @@ async function getSlotInfo(slotNumberAny) {
   }
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
   const feeReceived = lastTx.from == feeRecipient ? lastTx.value : 0n
-  const result = {blockNumber, gasUsed, baseFeePerGas, feesPaid, feeRecipient, feeReceived}
+  const proposerIndex = json.data.message.proposer_index
+  const rocketPool = await isRocketPoolValidator(proposerIndex)
+  const result = {blockNumber, proposerIndex, rocketPool, gasUsed, baseFeePerGas, feesPaid, feeRecipient, feeReceived}
   await db.put(slotNumber, result)
   return result
 }
@@ -70,11 +95,4 @@ const info = await getSlotInfo(slotNumber)
 info.totalBase = info.baseFeePerGas * info.gasUsed
 info.totalPriority = info.feesPaid - info.totalBase
 console.log(`Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
-
-const data = JSON.parse(gunzipSync(readFileSync('data/builder-submissions_slot-5000001-to-5002500.json.gz')))
-console.log(data.length)
-const nonzeros = []
-for (const item of data)
-  if (item.proposer_pubkey != '0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000')
-    nonzeros.push(item)
-console.log(nonzeros.length)
+console.log(`Proposer index ${info.proposerIndex} (RP: ${info.rocketPool})`)
