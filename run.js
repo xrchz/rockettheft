@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { open } from 'lmdb'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 
 program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
@@ -56,7 +56,12 @@ async function getSlotInfo(slotNumberAny) {
 }
 
 const slotNumber = parseInt(options.slot)
-const bidInfo = JSON.parse(gunzipSync(readFileSync('data/bid-values_slot-6202501-to-6206500.json.gz')))
+const dataDir = readdirSync('data')
+const bidValuesFile = dataDir.find(x => {
+  const m = x.match(/bid-values_slot-(\d+)-to-(\d+).json.gz$/)
+  return m.length && parseInt(m[1]) <= slotNumber && slotNumber <= parseInt(m[2])
+})
+const bidInfo = JSON.parse(gunzipSync(readFileSync(`data/${bidValuesFile}`)))
 const bidValues = (bidInfo[slotNumber] || []).map(s => BigInt(s))
 console.log(`Slot ${slotNumber}: got ${bidValues.length} bids`)
 const maxBid = bidValues.reduce((acc, bid) => bid > acc ? bid : acc, 0n)
