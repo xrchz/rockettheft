@@ -5,11 +5,17 @@ import { program } from 'commander'
 import { readFileSync } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 
+program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
+       .option('-b, --bn <url>', 'Beacon node API endpoint URL')
+       .requiredOption('-s, --slot <num>', 'Slot to print info for')
+program.parse()
+const options = program.opts()
+
 const dbDir = process.env.DB_DIR || 'db'
 const db = open({path: dbDir})
 
-const provider = new ethers.JsonRpcProvider(process.env.RPC || 'http://localhost:8545')
-const beaconRpcUrl = process.env.BN_URL || 'http://localhost:5052'
+const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC || 'http://localhost:8545')
+const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 
 async function getSlotInfo(slotNumberAny) {
   const slotNumber = parseInt(slotNumberAny)
@@ -49,12 +55,16 @@ async function getSlotInfo(slotNumberAny) {
   return result
 }
 
-const slotNumber = 5000004
+const slotNumber = parseInt(options.slot)
+const bidInfo = JSON.parse(gunzipSync(readFileSync('data/bid-values_slot-6202501-to-6206500.json.gz')))
+const bidValues = (bidInfo[slotNumber] || []).map(s => BigInt(s))
+console.log(`Slot ${slotNumber}: got ${bidValues.length} bids`)
+const maxBid = bidValues.reduce((acc, bid) => bid > acc ? bid : acc, 0n)
+console.log(`Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
 const info = await getSlotInfo(slotNumber)
 info.totalBase = info.baseFeePerGas * info.gasUsed
 info.totalPriority = info.feesPaid - info.totalBase
-console.log(info)
-process.exit()
+console.log(`Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
 
 const data = JSON.parse(gunzipSync(readFileSync('data/builder-submissions_slot-5000001-to-5002500.json.gz')))
 console.log(data.length)
