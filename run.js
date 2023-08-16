@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { open } from 'lmdb'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, createWriteStream } from 'node:fs'
 import { gunzipSync } from 'node:zlib'
 
 const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
@@ -128,20 +128,47 @@ async function getMaxBidForSlot(slotNumber) {
   return result
 }
 
+const fileName = `data/mevtheft_slot-${firstSlot}-to-${lastSlot}.csv`
+const outputFile = createWriteStream(fileName)
+const write = async s => new Promise(
+  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
+)
+console.log(`Writing to ${fileName}`)
+write('slot,max_bid,fees_over_base,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
+
+const timestamp = () => Intl.DateTimeFormat('en-GB',
+  {hour: 'numeric', minute: 'numeric', second: 'numeric'})
+  .format(new Date())
+
 let slotNumber = firstSlot
 while (slotNumber <= lastSlot) {
+  await write(`${slotNumber},`)
   const {maxBid, numBids} = await getMaxBidForSlot(slotNumber)
+  await write(`${maxBid},`)
+  console.log(timestamp())
   console.log(`Slot ${slotNumber}: ${numBids} bids`)
   console.log(`Slot ${slotNumber}: Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
   const info = await getSlotInfo(slotNumber)
+  if (info.blockNumber === null) {
+    console.log(`Slot ${slotNumber}: execution block missing`)
+    await write(',,,\n')
+    slotNumber++
+    continue
+  }
   info.totalBase = info.baseFeePerGas * info.gasUsed
   info.totalPriority = info.feesPaid - info.totalBase
   console.log(`Slot ${slotNumber}: Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
+  await write(`${info.totalPriority},`)
   console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
+  await write(`${info.proposerIndex},${info.minipoolAddress != nullAddress},`)
   if (info.minipoolAddress != nullAddress) {
     const correctFeeRecipient = await getCorrectFeeRecipient(info.minipoolAddress, info.blockNumber)
     const effectiveFeeRecipient = info.mevFeeRecipient || info.feeRecipient
     console.log(`Slot ${slotNumber}: Correct fee recipient: ${effectiveFeeRecipient == correctFeeRecipient}`)
+    await write(`${effectiveFeeRecipient == correctFeeRecipient}\n`)
   }
+  else
+    await write(`\n`)
   slotNumber++
 }
+outputFile.end()
