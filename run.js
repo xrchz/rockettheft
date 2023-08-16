@@ -90,10 +90,13 @@ async function getSlotInfo(slotNumberAny) {
       lastTx = await provider.getTransaction(hash)
   }
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
-  const feeReceived = lastTx.from == feeRecipient ? lastTx.value : 0n
+  const {feeReceived, mevFeeRecipient} = lastTx.from == feeRecipient ?
+    {feeReceived: lastTx.value, mevFeeRecipient: lastTx.to} :
+    {feeReceived: 0n, mevFeeRecipient: null}
   const proposerIndex = json.data.message.proposer_index
   const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
-  const result = {blockNumber, proposerIndex, minipoolAddress, gasUsed, baseFeePerGas, feesPaid, feeRecipient, feeReceived}
+  const result = {blockNumber, proposerIndex, minipoolAddress, gasUsed, baseFeePerGas,
+                  feesPaid, feeRecipient, mevFeeRecipient, feeReceived}
   await db.put(slotNumber, result)
   return result
 }
@@ -132,8 +135,8 @@ while (slotNumber <= lastSlot) {
   console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
   if (info.minipoolAddress != nullAddress) {
     const correctFeeRecipient = await getCorrectFeeRecipient(info.minipoolAddress, info.blockNumber)
-    console.log(`Fee recipient ${info.feeRecipient} vs ${correctFeeRecipient}`)
-    console.log(`Slot ${slotNumber}: Correct fee recipient: ${info.feeRecipient == correctFeeRecipient}`)
+    const effectiveFeeRecipient = info.mevFeeRecipient || info.feeRecipient
+    console.log(`Slot ${slotNumber}: Correct fee recipient: ${effectiveFeeRecipient == correctFeeRecipient}`)
   }
   slotNumber++
 }
