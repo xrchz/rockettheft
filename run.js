@@ -9,25 +9,27 @@ const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
 
 program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
        .option('-b, --bn <url>', 'Beacon node API endpoint URL')
-       .requiredOption('-s, --slot <num>', 'Slot to print info for')
+       .requiredOption('-s, --slot <num>', 'First slot to get info for')
+       .option('-t, --to-slot <num>', 'Last slot to get info for (default: --slot)')
 program.parse()
 const options = program.opts()
 
 const dbDir = process.env.DB_DIR || 'db'
 const db = open({path: dbDir})
 
-const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC || 'http://localhost:8545')
+const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 
 const nullAddress = '0x0000000000000000000000000000000000000000'
 const rocketStorage = new ethers.Contract(rocketStorageAddress,
   ['function getAddress(bytes32) view returns (address)'], provider)
-const getRocketAddress = name => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`))
-const rocketMinipoolManager = new ethers.Contract(
-  await getRocketAddress('rocketMinipoolManager'),
-  ['function getMinipoolByPubkey(bytes) view returns (address)'], provider)
+const getRocketAddress = (name, blockTag) => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`), blockTag ? {blockTag} : {})
 
-async function isRocketPoolValidator(index) {
+const rocketNodeDistributorFactory = new ethers.Contract(
+  await getRocketAddress('rocketNodeDistributorFactory'),
+  ['function getProxyAddress(address) view returns (address)'], provider)
+
+async function getMinipoolAddress(index, blockTag) {
   const path = `/eth/v1/beacon/states/finalized/validators/${index}`
   const url = new URL(path, beaconRpcUrl)
   const response = await fetch(url)
@@ -36,8 +38,23 @@ async function isRocketPoolValidator(index) {
     console.warn(`response text: ${await response.text()}`)
   }
   const json = await response.json()
-  const minipool = await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey)
-  return minipool != nullAddress
+  const rocketMinipoolManager = new ethers.Contract(
+    await getRocketAddress('rocketMinipoolManager', blockTag),
+    ['function getMinipoolByPubkey(bytes) view returns (address)'], provider)
+  return await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
+}
+
+async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
+  const minipool = new ethers.Contract(
+    minipoolAddress,
+    ['function getNodeAddress() view returns (address)'], provider)
+  const nodeAddress = await minipool.getNodeAddress()
+  const rocketNodeManager = new ethers.Contract(
+    await getRocketAddress('rocketNodeManager', blockTag),
+    ['function getSmoothingPoolRegistrationState(address) view returns (bool)'], provider)
+  const inSP = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
+  const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
+  return inSP ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
 }
 
 async function getSlotInfo(slotNumberAny) {
@@ -74,25 +91,48 @@ async function getSlotInfo(slotNumberAny) {
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
   const feeReceived = lastTx.from == feeRecipient ? lastTx.value : 0n
   const proposerIndex = json.data.message.proposer_index
-  const rocketPool = await isRocketPoolValidator(proposerIndex)
-  const result = {blockNumber, proposerIndex, rocketPool, gasUsed, baseFeePerGas, feesPaid, feeRecipient, feeReceived}
+  const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
+  const result = {blockNumber, proposerIndex, minipoolAddress, gasUsed, baseFeePerGas, feesPaid, feeRecipient, feeReceived}
   await db.put(slotNumber, result)
   return result
 }
 
-const slotNumber = parseInt(options.slot)
+const firstSlot = parseInt(options.slot)
+const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
+if (lastSlot < firstSlot) throw new Error(`invalid slot range: ${firstSlot}-${lastSlot}`)
 const dataDir = readdirSync('data')
-const bidValuesFile = dataDir.find(x => {
-  const m = x.match(/bid-values_slot-(\d+)-to-(\d+).json.gz$/)
-  return m.length && parseInt(m[1]) <= slotNumber && slotNumber <= parseInt(m[2])
-})
-const bidInfo = JSON.parse(gunzipSync(readFileSync(`data/${bidValuesFile}`)))
-const bidValues = (bidInfo[slotNumber] || []).map(s => BigInt(s))
-console.log(`Slot ${slotNumber}: got ${bidValues.length} bids`)
-const maxBid = bidValues.reduce((acc, bid) => bid > acc ? bid : acc, 0n)
-console.log(`Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
-const info = await getSlotInfo(slotNumber)
-info.totalBase = info.baseFeePerGas * info.gasUsed
-info.totalPriority = info.feesPaid - info.totalBase
-console.log(`Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
-console.log(`Proposer index ${info.proposerIndex} (RP: ${info.rocketPool})`)
+
+const maxBidForSlot = new Map()
+async function getMaxBidForSlot(slotNumber) {
+  if (maxBidForSlot.has(slotNumber)) return maxBidForSlot.get(slotNumber)
+  const bidValuesFile = dataDir.find(x => {
+    const m = x.match(/bid-values_slot-(\d+)-to-(\d+).json.gz$/)
+    return m && m.length && parseInt(m[1]) <= slotNumber && slotNumber <= parseInt(m[2])
+  })
+  if (!bidValuesFile)
+    throw new Error(`no bid values file for slot ${slotNumber}`)
+  const bidInfo = JSON.parse(gunzipSync(readFileSync(`data/${bidValuesFile}`)))
+  const bidValues = (bidInfo[slotNumber] || []).map(s => BigInt(s))
+  const maxBid = bidValues.reduce((acc, bid) => bid > acc ? bid : acc, 0n)
+  const result = {maxBid, numBids: bidValues.length}
+  maxBidForSlot.set(slotNumber, result)
+  return result
+}
+
+let slotNumber = firstSlot
+while (slotNumber <= lastSlot) {
+  const {maxBid, numBids} = await getMaxBidForSlot(slotNumber)
+  console.log(`Slot ${slotNumber}: ${numBids} bids`)
+  console.log(`Slot ${slotNumber}: Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
+  const info = await getSlotInfo(slotNumber)
+  info.totalBase = info.baseFeePerGas * info.gasUsed
+  info.totalPriority = info.feesPaid - info.totalBase
+  console.log(`Slot ${slotNumber}: Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
+  console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
+  if (info.minipoolAddress != nullAddress) {
+    const correctFeeRecipient = await getCorrectFeeRecipient(info.minipoolAddress, info.blockNumber)
+    console.log(`Fee recipient ${info.feeRecipient} vs ${correctFeeRecipient}`)
+    console.log(`Slot ${slotNumber}: Correct fee recipient: ${info.feeRecipient == correctFeeRecipient}`)
+  }
+  slotNumber++
+}
