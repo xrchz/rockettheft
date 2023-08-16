@@ -134,7 +134,7 @@ const write = async s => new Promise(
   resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
 )
 console.log(`Writing to ${fileName}`)
-write('slot,max_bid,fees_over_base,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
+write('slot,max_bid,fees_over_base,mev_reward,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
 
 const timestamp = () => Intl.DateTimeFormat('en-GB',
   {hour: 'numeric', minute: 'numeric', second: 'numeric'})
@@ -151,14 +151,15 @@ while (slotNumber <= lastSlot) {
   const info = await getSlotInfo(slotNumber)
   if (info.blockNumber === null) {
     console.log(`Slot ${slotNumber}: execution block missing`)
-    await write(',,,\n')
+    await write(',,,,\n')
     slotNumber++
     continue
   }
   info.totalBase = info.baseFeePerGas * info.gasUsed
   info.totalPriority = info.feesPaid - info.totalBase
   console.log(`Slot ${slotNumber}: Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
-  await write(`${info.totalPriority},`)
+  console.log(`Slot ${slotNumber}: Fees paid as MEV reward: ${ethers.formatEther(info.feeReceived)}`)
+  await write(`${info.totalPriority},${info.feeReceived},`)
   console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
   await write(`${info.proposerIndex},${info.minipoolAddress != nullAddress},`)
   if (info.minipoolAddress != nullAddress) {
