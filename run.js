@@ -65,7 +65,12 @@ async function getSlotInfo(slotNumberAny) {
   const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
   const url = new URL(path, beaconRpcUrl)
   const response = await fetch(url)
-  if (response.status !== 200) {
+  if (response.status === 404) {
+    const result = {blockNumber: null}
+    await db.put(slotNumber, result)
+    return result
+  }
+  else if (response.status !== 200) {
     console.warn(`Unexpected response status getting ${slotNumber} block: ${response.status}`)
     console.warn(`response text: ${await response.text()}`)
   }
