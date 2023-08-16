@@ -96,10 +96,11 @@ async function getSlotInfo(slotNumberAny) {
   }
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
   const {feeReceived, mevFeeRecipient} = lastTx.from == feeRecipient ?
-    {feeReceived: lastTx.value, mevFeeRecipient: lastTx.to} :
-    {feeReceived: 0n, mevFeeRecipient: null}
+    {feeReceived: lastTx.value.toString(), mevFeeRecipient: lastTx.to} :
+    {feeReceived: '0', mevFeeRecipient: null}
   const proposerIndex = json.data.message.proposer_index
   const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
+  feesPaid = feesPaid.toString()
   const result = {blockNumber, proposerIndex, minipoolAddress, gasUsed, baseFeePerGas,
                   feesPaid, feeRecipient, mevFeeRecipient, feeReceived}
   await db.put(slotNumber, result)
@@ -146,7 +147,7 @@ while (slotNumber <= lastSlot) {
   const {maxBid, numBids} = await getMaxBidForSlot(slotNumber)
   await write(`${maxBid},`)
   console.log(timestamp())
-  console.log(`Slot ${slotNumber}: ${numBids} bids`)
+  console.log(`Slot ${slotNumber}: ${numBids} flashbots bids`)
   console.log(`Slot ${slotNumber}: Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
   const info = await getSlotInfo(slotNumber)
   if (info.blockNumber === null) {
@@ -156,7 +157,7 @@ while (slotNumber <= lastSlot) {
     continue
   }
   info.totalBase = info.baseFeePerGas * info.gasUsed
-  info.totalPriority = info.feesPaid - info.totalBase
+  info.totalPriority = BigInt(info.feesPaid) - info.totalBase
   console.log(`Slot ${slotNumber}: Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
   console.log(`Slot ${slotNumber}: Fees paid as MEV reward: ${ethers.formatEther(info.feeReceived)}`)
   await write(`${info.totalPriority},${info.feeReceived},`)
