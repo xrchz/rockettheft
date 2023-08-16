@@ -11,6 +11,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
        .option('-b, --bn <url>', 'Beacon node API endpoint URL')
        .requiredOption('-s, --slot <num>', 'First slot to get info for')
        .option('-t, --to-slot <num>', 'Last slot to get info for (default: --slot)')
+       .option('--no-cache', 'Do not use the slot info cache')
 program.parse()
 const options = program.opts()
 
@@ -60,7 +61,7 @@ async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
 async function getSlotInfo(slotNumberAny) {
   const slotNumber = parseInt(slotNumberAny)
   const cached = db.get(slotNumber)
-  if (cached) return cached
+  if (options.cache && cached) return cached
   const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
   const url = new URL(path, beaconRpcUrl)
   const response = await fetch(url)
