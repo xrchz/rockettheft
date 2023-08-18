@@ -32,6 +32,14 @@ vanilla is used seem to have slightly _lower_ bids, if anything.
 > over-represented (higher probability) for the lines other than "RP - correct MEV boost" (because
 > thieves would opportunistically target valuable blocks).
 
+Note that the current method gets:
+- Max bid from only Flashbots relay
+  - This is used to calculate losses from vanilla blocks
+- MEV reward from any builder/relay that uses the last transaction in a block to send it
+  - This is used to calculate losses from incorrect fee recipients 
+  - This method was validated on a few thousand slots for the cases that were serviced by Flashbots
+  relay
+
 ### Current losses
 
 Running `analysis.py` provides some text in addition to making the plots:
