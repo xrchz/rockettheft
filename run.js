@@ -117,8 +117,8 @@ async function getSlotInfo(slotNumberAny) {
 const firstSlot = parseInt(options.slot)
 const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
 if (lastSlot < firstSlot) throw new Error(`invalid slot range: ${firstSlot}-${lastSlot}`)
-const dataDir = readdirSync('data')
 
+const dataDir = readdirSync('data')
 const maxBidForSlot = new Map()
 async function getMaxBidForSlot(slotNumber) {
   if (maxBidForSlot.has(slotNumber)) return maxBidForSlot.get(slotNumber)
@@ -136,7 +136,7 @@ async function getMaxBidForSlot(slotNumber) {
   return result
 }
 
-const fileName = `data/mevtheft_slot-${firstSlot}-to-${lastSlot}.csv`
+const fileName = `data/rt_slot-${firstSlot}-to-${lastSlot}.csv`
 const outputFile = createWriteStream(fileName)
 const write = async s => new Promise(
   resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
@@ -147,6 +147,12 @@ write('slot,max_bid,mev_reward,proposer_index,proposer_is_rocketpool,correct_fee
 const timestamp = () => Intl.DateTimeFormat('en-GB',
   {hour: 'numeric', minute: 'numeric', second: 'numeric'})
   .format(new Date())
+
+const crossCheckErrors = []
+function crossCheck(msg) {
+  console.warn(msg)
+  crossCheckErrors.push(msg)
+}
 
 let slotNumber = firstSlot
 while (slotNumber <= lastSlot) {
@@ -165,6 +171,15 @@ while (slotNumber <= lastSlot) {
   }
   console.log(`Slot ${slotNumber}: Fees paid as MEV reward: ${ethers.formatEther(info.feeReceived)}`)
   await write(`${info.feeReceived},`)
+
+  const payload = await getPayload(slotNumber)
+  if (info.mevFeeRecipient && !payload)
+    console.log(`Slot ${slotNumber}: MEV recipient but no flashbots payload`)
+  if (payload && info.mevFeeRecipient != ethers.getAddress(payload.proposer_fee_recipient))
+    crossCheck(`Slot ${slotNumber}: Delivered payload to wrong fee recipient ${info.mevFeeRecipient} vs ${payload.proposer_fee_recipient}`)
+  if (payload && info.mevFeeRecipient && BigInt(payload.value) != BigInt(info.feeReceived))
+    crossCheck(`Slot ${slotNumber}: Flashbots payload value differs from feeReceived: ${payload.value} vs ${info.feeReceived}`)
+
   console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
   await write(`${info.proposerIndex},${info.minipoolAddress != nullAddress},`)
   if (info.minipoolAddress != nullAddress) {
@@ -175,6 +190,8 @@ while (slotNumber <= lastSlot) {
   }
   else
     await write(`\n`)
+  while (crossCheckErrors.length)
+    await write(crossCheckErrors.shift().concat('\n'))
   slotNumber++
 }
 outputFile.end()
