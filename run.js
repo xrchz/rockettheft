@@ -102,10 +102,10 @@ async function getSlotInfo(slotNumberAny) {
   const blockNumberHex = `0x${blockNumber.toString(16)}`
   const txCount = await provider.send('eth_getBlockTransactionCountByNumber',
     [blockNumberHex]).then(r => parseInt(r))
-  const lastTx = await provider.send('eth_getTransactionByBlockNumberAndIndex',
+  const lastTx = txCount && await provider.send('eth_getTransactionByBlockNumberAndIndex',
     [blockNumberHex, `0x${(txCount - 1).toString(16)}`])
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
-  const {feeReceived, mevFeeRecipient} = ethers.getAddress(lastTx.from) == feeRecipient ?
+  const {feeReceived, mevFeeRecipient} = lastTx && ethers.getAddress(lastTx.from) == feeRecipient ?
     {feeReceived: lastTx.value.toString(), mevFeeRecipient: ethers.getAddress(lastTx.to)} :
     {feeReceived: '0', mevFeeRecipient: null}
   const proposerIndex = json.data.message.proposer_index
