@@ -1,5 +1,4 @@
 import 'dotenv/config'
-import { open } from 'lmdb'
 import { ethers } from 'ethers'
 import { program } from 'commander'
 import { readFileSync, readdirSync, createWriteStream } from 'node:fs'
@@ -11,12 +10,8 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
        .option('-b, --bn <url>', 'Beacon node API endpoint URL')
        .requiredOption('-s, --slot <num>', 'First slot to get info for')
        .option('-t, --to-slot <num>', 'Last slot to get info for (default: --slot)')
-       .option('--no-cache', 'Do not use the slot info cache')
 program.parse()
 const options = program.opts()
-
-const dbDir = process.env.DB_DIR || 'db'
-const db = open({path: dbDir})
 
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
@@ -60,14 +55,11 @@ async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
 
 async function getSlotInfo(slotNumberAny) {
   const slotNumber = parseInt(slotNumberAny)
-  const cached = db.get(slotNumber)
-  if (options.cache && cached) return cached
   const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
   const url = new URL(path, beaconRpcUrl)
   const response = await fetch(url)
   if (response.status === 404) {
     const result = {blockNumber: null}
-    await db.put(slotNumber, result)
     return result
   }
   else if (response.status !== 200) {
@@ -79,31 +71,21 @@ async function getSlotInfo(slotNumberAny) {
         parseInt(json.data.message.body.execution_payload_header.block_number))) {
     console.warn(`${slotNumber} has no associated post-merge block`)
     const result = {blockNumber: null}
-    await db.put(slotNumber, result)
     return result
   }
   const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
-  const block = await provider.getBlock(blockNumber)
-  const gasUsed = block.gasUsed
-  const baseFeePerGas = block.baseFeePerGas
-  let feesPaid = 0n
-  let lastTx = block.transactions.length - 1
-  for (const hash of block.transactions) {
-    const receipt = await provider.getTransactionReceipt(hash)
-    feesPaid += receipt.gasUsed * receipt.gasPrice
-    if (receipt.index == lastTx)
-      lastTx = await provider.getTransaction(hash)
-  }
+  const blockNumberHex = `0x${blockNumber.toString(16)}`
+  const txCount = await provider.send('eth_getBlockTransactionCountByNumber',
+    [blockNumberHex]).then(r => parseInt(r))
+  const lastTx = await provider.send('eth_getTransactionByBlockNumberAndIndex',
+    [blockNumberHex, `0x${(txCount - 1).toString(16)}`])
   const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
-  const {feeReceived, mevFeeRecipient} = lastTx.from == feeRecipient ?
-    {feeReceived: lastTx.value.toString(), mevFeeRecipient: lastTx.to} :
+  const {feeReceived, mevFeeRecipient} = ethers.getAddress(lastTx.from) == feeRecipient ?
+    {feeReceived: lastTx.value.toString(), mevFeeRecipient: ethers.getAddress(lastTx.to)} :
     {feeReceived: '0', mevFeeRecipient: null}
   const proposerIndex = json.data.message.proposer_index
   const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
-  feesPaid = feesPaid.toString()
-  const result = {blockNumber, proposerIndex, minipoolAddress, gasUsed, baseFeePerGas,
-                  feesPaid, feeRecipient, mevFeeRecipient, feeReceived}
-  await db.put(slotNumber, result)
+  const result = {blockNumber, proposerIndex, minipoolAddress, feeRecipient, mevFeeRecipient, feeReceived}
   return result
 }
 
@@ -135,7 +117,7 @@ const write = async s => new Promise(
   resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
 )
 console.log(`Writing to ${fileName}`)
-write('slot,max_bid,fees_over_base,mev_reward,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
+write('slot,max_bid,mev_reward,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
 
 const timestamp = () => Intl.DateTimeFormat('en-GB',
   {hour: 'numeric', minute: 'numeric', second: 'numeric'})
@@ -152,15 +134,12 @@ while (slotNumber <= lastSlot) {
   const info = await getSlotInfo(slotNumber)
   if (info.blockNumber === null) {
     console.log(`Slot ${slotNumber}: execution block missing`)
-    await write(',,,,\n')
+    await write(',,,\n')
     slotNumber++
     continue
   }
-  info.totalBase = info.baseFeePerGas * info.gasUsed
-  info.totalPriority = BigInt(info.feesPaid) - info.totalBase
-  console.log(`Slot ${slotNumber}: Fees paid over base fee: ${ethers.formatEther(info.totalPriority)} ETH`)
   console.log(`Slot ${slotNumber}: Fees paid as MEV reward: ${ethers.formatEther(info.feeReceived)}`)
-  await write(`${info.totalPriority},${info.feeReceived},`)
+  await write(`${info.feeReceived},`)
   console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
   await write(`${info.proposerIndex},${info.minipoolAddress != nullAddress},`)
   if (info.minipoolAddress != nullAddress) {
