@@ -8,6 +8,7 @@ const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
 
 program.option('-r, --rpc <url>', 'Full node RPC endpoint URL')
        .option('-b, --bn <url>', 'Beacon node API endpoint URL')
+       .option('-y, --relay <url>', 'Relay data endpoint URL')
        .requiredOption('-s, --slot <num>', 'First slot to get info for')
        .option('-t, --to-slot <num>', 'Last slot to get info for (default: --slot)')
 program.parse()
@@ -15,6 +16,30 @@ const options = program.opts()
 
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
+const relayApiUrl = options.relay || process.env.RELAY ||
+  'https://0xac6e77dfe25ecd6110b8e780608cce0dab71fdd5ebea22a16c0205200f2f8e2e3ad3b71d3499c54ad14d6c21b41a37ae@boost-relay.flashbots.net'
+
+async function getPayload(slotNumber) {
+  const path = '/relay/v1/data/bidtraces/proposer_payload_delivered'
+  const params = new URLSearchParams({slot: `${slotNumber}`})
+  const url = new URL(path.concat('?', params.toString()), relayApiUrl)
+  const username = url.username
+  url.username = ''
+  const response = await fetch(url,
+    {credentials: 'include',
+     headers: {Authorization: `Basic ${Buffer.from(username.concat(':')).toString('base64')}`}
+    })
+  if (response.status !== 200) {
+    console.warn(`Unexpected response status getting ${slotNumber} payload: ${response.status}`)
+    console.warn(`response text: ${await response.text()}`)
+  }
+  const payloads = await response.json()
+  if (!(payloads instanceof Array && payloads.length <= 1)) {
+    console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
+    return {}
+  }
+  return payloads.length && payloads[0]
+}
 
 const nullAddress = '0x0000000000000000000000000000000000000000'
 const rocketStorage = new ethers.Contract(rocketStorageAddress,
