@@ -55,6 +55,32 @@ There were 129 vanilla RP blocks
 
 The main take-away I found here is that vanilla blocks do represent a real performance hit.
 
+### For reference: goals per the bounty
+
+```
+Detail level
+1) For each MEV-boost block, check if an acceptable fee recipient was used
+2) For each vanilla block, calculate how much was lost by not using MEV-boost
+
+High level
+3) Losses due to wrong fee recipient
+  3a) Total ETH
+  3b) ETH per period
+  3c) Effect on APR
+4) Losses due to not using MEV-boost
+  4a) Total ETH
+  4b) ETH per period
+  4c) Effect on APR
+5) Distribution of MEV-boost bids for
+  5a) All block
+  5b) All RP blocks
+  5c) :star: All RP blocks that use MEV-boost w/correct fee recipient
+  5d) :star: All RP blocks that use MEV-boost w/wrong fee recipient
+  5e) :star: All vanilla RP blocks
+```
+
+
+
 ## Tools
 ### Dependencies
 - [nodejs & npm](https://nodejs.org/en)
