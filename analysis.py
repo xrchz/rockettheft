@@ -102,13 +102,18 @@ def recipient_losses(df, total_weeks, rethdict):
 
 
 def vanilla_losses(df, total_weeks, rethdict):
-    df_rp_vanilla = df[df['is_vanilla'] & df['proposer_is_rocketpool']]
+    df_temp = df.copy()
+    df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7).mean()
+    df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['proposer_is_rocketpool']]
     n = len(df_rp_vanilla)
     n_unknown = len(df_rp_vanilla[df_rp_vanilla['max_bid'] == 0])
     lost_eth = wei2eth(df_rp_vanilla[df_rp_vanilla['max_bid'] != 0]['max_bid'])
     assert n == len(lost_eth) + n_unknown
     lost_eth.to_csv('./results/vanilla_losses.csv')
-    total_loss = sum(lost_eth) + lost_eth.mean() * n_unknown
+    estimated_lost_eth = lost_eth.mean() * n_unknown
+    total_loss = sum(lost_eth) + estimated_lost_eth
+    # max bid isn't always used (eg, bid gets in too late); 90% is a rough empirical correction
+    total_loss *= 0.9
 
     nolossd = rethdict.copy()
     nolossd['end_eth'] += total_loss
@@ -122,6 +127,13 @@ def vanilla_losses(df, total_weeks, rethdict):
     print(f'4c: APY was {rethdict2apy(rethdict):0.2f}% '
           f'when it could have been ~{rethdict2apy(nolossd):0.2f}%')
     print(f' aka, a {100*(1 - rethdict2apy(rethdict)/rethdict2apy(nolossd)):0.2f}% performance hit')
+
+    # sanity check with alternative lost_eth estimate based on nearby blocks
+    proxy_losses = df_rp_vanilla[df_rp_vanilla['max_bid'] == 0]['proxy_max_bid']
+    assert not proxy_losses.isnull().values.any()  # make sure we have values for all
+    alt_estimated_lost_eth = wei2eth(sum(proxy_losses))
+    print(f'(Sanity checking 2 ways of estimating the unknown loss: {estimated_lost_eth:0.3f} vs '
+          f'{alt_estimated_lost_eth:0.3f})')
 
     # stretch TODO: highlight repeat offenders, especially if split between MEV boost and vanilla
 
@@ -144,12 +156,15 @@ def distribution_plots(df):
     df_rp_vanilla = df_rp[df_rp['is_vanilla']]
     df_rp_mev_correct = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == True]
     df_rp_mev_wrong = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == False]
+    df_nonrp = df[df['proposer_is_rocketpool'] == False]
+    df_nonrp_vanilla = df_nonrp[df_nonrp['is_vanilla']]
 
     all_x, all_sf = get_sf(df['max_bid_eth'])
     rp_x, rp_sf = get_sf(df_rp['max_bid_eth'])
     rp_vanilla_x, rp_vanilla_sf = get_sf(df_rp_vanilla['max_bid_eth'])
     rp_mev_correct_x, rp_mev_correct_sf = get_sf(df_rp_mev_correct['max_bid_eth'])
     rp_mev_wrong_x, rp_mev_wrong_sf = get_sf(df_rp_mev_wrong['max_bid_eth'])
+    nonrp_vanilla_x, nonrp_vanilla_sf = get_sf(df_nonrp_vanilla['max_bid_eth'])
 
     # 5a/5b Global vs RP -- ideally these look extremely similar
     fig, ax = plt.subplots(1)
@@ -171,6 +186,15 @@ def distribution_plots(df):
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig('./results/rp_subcategories.png', bbox_inches='tight')
+
+    # yokem suggestion Vanilla Blocks - RP vs non
+    fig, ax = plt.subplots(1)
+    ax.semilogy(nonrp_vanilla_x, nonrp_vanilla_sf, marker='.', label='Vanilla - nonRP')
+    ax.semilogy(rp_vanilla_x, rp_vanilla_sf, marker='.', label='Vanilla - RP')
+    ax.legend()
+    ax.set_xlabel('Bid (ETH)')
+    ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
+    fig.savefig('./results/vanilla_rp_vs_nonrp.png', bbox_inches='tight')
 
 
 def main():
@@ -200,3 +224,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# TODO check if theres's a period where nimbus bug caused issues that we should exclude
+#      that data; it might be May/June 2023
