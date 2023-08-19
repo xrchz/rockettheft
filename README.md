@@ -55,13 +55,21 @@ Running `analysis.py` provides some text in addition to making the plots:
 There were 129 vanilla RP blocks
   91 had bids; we can get loss (see results/vanilla_losses.csv)
   38 of them had no bid; we'll use the mean of the above as a guess
-4a: ~8.701 known ETH lost due to not using relays
-4b: ~5.159 ETH lost per week
-4c: APY was 4.35% when it could have been ~4.48%
- aka, a 2.79% performance hit
- ```
+4a: ~7.831 known ETH lost due to not using relays
+4b: ~4.643 ETH lost per week
+4c: APY was 4.35% when it could have been ~4.46%
+  aka, a 2.51% performance hit
+(Sanity checking 2 ways of estimating the unknown loss: 2.563 vs 2.368)
+```
 
 The main take-away I found here is that vanilla blocks do represent a real performance hit.
+
+### Vanilla blocks: RP vs nonRP sanity check
+![image](./results/vanilla_rp_vs_nonrp.png)
+
+The plot above shows a survival function for bids on RP vanilla blocks vs non-RP vanilla blocks.
+Ideally we'd expect the same curves to be followed (and they are). If they were different, we'd have
+to try to interpret it from between various explanations.
 
 ### For reference: goals per the bounty
 
