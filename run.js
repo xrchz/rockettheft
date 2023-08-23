@@ -81,7 +81,7 @@ async function getBids(slotNumber, relayName, relayApiUrl) {
     console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
     return []
   }
-  return payloads
+  return payloads.map(x => BigInt(x.value))
 }
 
 const nullAddress = '0x0000000000000000000000000000000000000000'
@@ -116,9 +116,10 @@ async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
   const rocketNodeManager = new ethers.Contract(
     await getRocketAddress('rocketNodeManager', blockTag),
     ['function getSmoothingPoolRegistrationState(address) view returns (bool)'], provider)
-  const inSP = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
+  const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
   const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
-  return inSP ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
+  const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
+  return {nodeAddress, inSmoothingPool, correctFeeRecipient}
 }
 
 /*
@@ -135,16 +136,16 @@ async function populateCache(slotNumber) {
     if (typeof db.get(maxBidKey) == 'undefined') {
       const bids = await getBids(slotNumber, relayName, relayApiUrl)
       const maxBid = bids.length ?
-        bids.reduce((max, bid) => max > bid.value ? max : bid.value, 0n).toString() :
+        bids.reduce((max, bid) => max > bid ? max : bid, 0n).toString() :
         null
       await db.put(maxBidKey, maxBid)
     }
-    const proposedKey = `${keyPrefix}/${relayName}/proposed`
+    const proposedKey = `${keyPrefix}/proposed`
     if (typeof db.get(proposedKey) == 'undefined') {
       const payload = await getPayload(slotNumber, relayName, relayApiUrl)
       const result = payload ?
         {mevReward: payload.value.toString(),
-         feeRecipient: payload.proposer_fee_recipient} :
+         feeRecipient: ethers.getAddress(payload.proposer_fee_recipient)} :
         null
       await db.put(proposedKey, result)
     }
@@ -170,7 +171,6 @@ async function populateCache(slotNumber) {
       return
     }
     const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
-    const blockNumberHex = `0x${blockNumber.toString(16)}`
     const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
     const proposerIndex = json.data.message.proposer_index
     const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
@@ -180,6 +180,7 @@ async function populateCache(slotNumber) {
 
 /*
 async function getSlotInfo(slotNumber) {
+  const blockNumberHex = `0x${blockNumber.toString(16)}`
   const txCount = await provider.send('eth_getBlockTransactionCountByNumber',
     [blockNumberHex]).then(r => parseInt(r))
   const lastTx = txCount && await provider.send('eth_getTransactionByBlockNumberAndIndex',
@@ -209,12 +210,76 @@ if (!options.skipCache) {
 }
 
 if (!options.cacheOnly) {
-  console.warn('Output csv not yet implemented')
+  const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
+  const outputFile = createWriteStream(fileName)
+  const write = async s => new Promise(
+    resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
+  )
+  console.log(`Writing to ${fileName}`)
+  await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
+  await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient\n')
+
+  let slotNumber = firstSlot
+  while (slotNumber <= lastSlot) {
+    await write(`${slotNumber},`)
+    console.log(timestamp())
+    const {blockNumber, proposerIndex, feeRecipient, minipoolAddress} = db.get(`${slotNumber}`) || {}
+    if (typeof blockNumber == 'undefined') {
+      console.log(`Slot ${slotNumber}: Execution block missing`)
+      await write(',,,,,,,,\n')
+      slotNumber++
+      continue
+    }
+    let [maxBid, maxBidRelay] = ['', '']
+    for (const relayName of relayApiUrls.keys()) {
+      const relayBid = db.get(`${slotNumber}/${relayName}/maxBid`) || ''
+      if (BigInt(relayBid) > BigInt(maxBid))
+        [maxBid, maxBidRelay] = [relayBid, relayName]
+    }
+    await write(`${maxBid},${maxBidRelay},`)
+    console.log(`Slot ${slotNumber}: Max bid ${ethers.formatEther(maxBid || '0')} ETH from ${maxBidRelay || '(none)'}`)
+    let [mevReward, mevRewardRelay, mevFeeRecipient] = ['', '', '']
+    const mevRewardRelays = []
+    for (const relayName of relayApiUrls.keys()) {
+      const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get(`${slotNumber}/${relayName}/proposed`) || {}
+      if (relayFeeRecipient || relayMevReward) {
+        if ((mevReward || mevRewardRelay || mevFeeRecipient) && mevReward != relayMevReward) {
+          console.error(`Slot ${slotNumber}: Duplicate MEV reward ${mevRewardRelay} for ${
+            ethers.formatEther(mevReward || '0')} vs ${relayName} for ${
+            ethers.formatEther(relayMevReward || '0')}`)
+          await new Promise(resolve => outputFile.end(resolve))
+          process.exit(1)
+        }
+        [mevReward, mevRewardRelay, mevFeeRecipient] = [relayMevReward, relayName, relayFeeRecipient]
+        mevRewardRelays.push(mevRewardRelay)
+      }
+    }
+    await write(`${mevReward},${mevRewardRelays.join(';')},`)
+    console.log(`Slot ${slotNumber}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
+      mevRewardRelay ? mevRewardRelay.concat(' via ', mevFeeRecipient) : '(none)'}`)
+    const isRocketpool = minipoolAddress != nullAddress
+    await write(`${proposerIndex},${isRocketpool},`)
+    console.log(`Slot ${slotNumber}: Proposer index ${proposerIndex} (${isRocketpool ? 'RP' : 'not RP'})`)
+    if (isRocketpool) {
+      const {nodeAddress, inSmoothingPool, correctFeeRecipient} = await getCorrectFeeRecipient(minipoolAddress, blockNumber)
+      const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
+      const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
+      await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient}\n`)
+      console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient}`)
+    }
+    else {
+      await write(',,\n')
+    }
+    slotNumber++
+  }
+  await new Promise(resolve => outputFile.end(resolve))
 }
 
 process.exit()
 
-// TODO: also store proposer_fee_recipient in processed bid values files
+// TODO: use these where possible
+// TODO: to use must store proposer_fee_recipient in processed bid values files
+/*
 const dataDir = readdirSync('data')
 const maxBidForSlot = new Map()
 async function getMaxBidForSlot(slotNumber) {
@@ -232,14 +297,7 @@ async function getMaxBidForSlot(slotNumber) {
   maxBidForSlot.set(slotNumber, result)
   return result
 }
-
-const fileName = `data/rt_slot-${firstSlot}-to-${lastSlot}.csv`
-const outputFile = createWriteStream(fileName)
-const write = async s => new Promise(
-  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
-)
-console.log(`Writing to ${fileName}`)
-write('slot,max_bid,mev_reward,proposer_index,proposer_is_rocketpool,correct_fee_recipient\n')
+*/
 
 const crossCheckErrors = []
 function crossCheck(msg) {
