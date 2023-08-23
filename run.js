@@ -42,7 +42,7 @@ const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL |
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 
 function fetchRelayApi(relayApiUrl, path, params) {
-  // TODO: rate-limit
+  // TODO: rate-limit if necessary
   const url = new URL(path.concat('?', params.toString()), relayApiUrl)
   const username = url.username
   url.username = ''
@@ -178,21 +178,6 @@ async function populateCache(slotNumber) {
   }
 }
 
-/*
-async function getSlotInfo(slotNumber) {
-  const blockNumberHex = `0x${blockNumber.toString(16)}`
-  const txCount = await provider.send('eth_getBlockTransactionCountByNumber',
-    [blockNumberHex]).then(r => parseInt(r))
-  const lastTx = txCount && await provider.send('eth_getTransactionByBlockNumberAndIndex',
-    [blockNumberHex, `0x${(txCount - 1).toString(16)}`])
-  const {feeReceived, mevFeeRecipient} = lastTx && ethers.getAddress(lastTx.from) == feeRecipient ?
-    {feeReceived: lastTx.value.toString(), mevFeeRecipient: ethers.getAddress(lastTx.to)} :
-    {feeReceived: '0', mevFeeRecipient: null}
-  const result = {blockNumber, proposerIndex, minipoolAddress, feeRecipient, mevFeeRecipient, feeReceived}
-  return result
-}
-*/
-
 const timestamp = () => Intl.DateTimeFormat('en-GB',
   {hour: 'numeric', minute: 'numeric', second: 'numeric'})
   .format(new Date())
@@ -274,75 +259,3 @@ if (!options.cacheOnly) {
   }
   await new Promise(resolve => outputFile.end(resolve))
 }
-
-process.exit()
-
-// TODO: use these where possible
-// TODO: to use must store proposer_fee_recipient in processed bid values files
-/*
-const dataDir = readdirSync('data')
-const maxBidForSlot = new Map()
-async function getMaxBidForSlot(slotNumber) {
-  if (maxBidForSlot.has(slotNumber)) return maxBidForSlot.get(slotNumber)
-  const bidValuesFile = dataDir.find(x => {
-    const m = x.match(/bid-values_slot-(\d+)-to-(\d+).json.gz$/)
-    return m && m.length && parseInt(m[1]) <= slotNumber && slotNumber <= parseInt(m[2])
-  })
-  if (!bidValuesFile)
-    throw new Error(`no bid values file for slot ${slotNumber}`)
-  const bidInfo = JSON.parse(gunzipSync(readFileSync(`data/${bidValuesFile}`)))
-  const bidValues = (bidInfo[slotNumber] || []).map(s => BigInt(s))
-  const maxBid = bidValues.reduce((acc, bid) => bid > acc ? bid : acc, 0n)
-  const result = {maxBid, numBids: bidValues.length}
-  maxBidForSlot.set(slotNumber, result)
-  return result
-}
-*/
-
-const crossCheckErrors = []
-function crossCheck(msg) {
-  console.warn(msg)
-  crossCheckErrors.push(msg)
-}
-
-let slotNumber = firstSlot
-while (slotNumber <= lastSlot) {
-  await write(`${slotNumber},`)
-  const {maxBid, numBids} = await getMaxBidForSlot(slotNumber)
-  await write(`${maxBid},`)
-  console.log(timestamp())
-  console.log(`Slot ${slotNumber}: ${numBids} flashbots bids`)
-  console.log(`Slot ${slotNumber}: Max flashbots bid value: ${ethers.formatEther(maxBid)} ETH`)
-  const info = await getSlotInfo(slotNumber)
-  if (info.blockNumber === null) {
-    console.log(`Slot ${slotNumber}: execution block missing`)
-    await write(',,,\n')
-    slotNumber++
-    continue
-  }
-  console.log(`Slot ${slotNumber}: Fees paid as MEV reward: ${ethers.formatEther(info.feeReceived)}`)
-  await write(`${info.feeReceived},`)
-
-  const payload = await getPayload(slotNumber)
-  if (info.mevFeeRecipient && !payload)
-    console.log(`Slot ${slotNumber}: MEV recipient but no flashbots payload`)
-  if (payload && info.mevFeeRecipient != ethers.getAddress(payload.proposer_fee_recipient))
-    crossCheck(`Slot ${slotNumber}: Delivered payload to wrong fee recipient ${info.mevFeeRecipient} vs ${payload.proposer_fee_recipient}`)
-  if (payload && info.mevFeeRecipient && BigInt(payload.value) != BigInt(info.feeReceived))
-    crossCheck(`Slot ${slotNumber}: Flashbots payload value differs from feeReceived: ${payload.value} vs ${info.feeReceived}`)
-
-  console.log(`Slot ${slotNumber}: Proposer index ${info.proposerIndex} (RP: ${info.minipoolAddress != nullAddress})`)
-  await write(`${info.proposerIndex},${info.minipoolAddress != nullAddress},`)
-  if (info.minipoolAddress != nullAddress) {
-    const correctFeeRecipient = await getCorrectFeeRecipient(info.minipoolAddress, info.blockNumber)
-    const effectiveFeeRecipient = info.mevFeeRecipient || info.feeRecipient
-    console.log(`Slot ${slotNumber}: Correct fee recipient: ${effectiveFeeRecipient == correctFeeRecipient}`)
-    await write(`${effectiveFeeRecipient == correctFeeRecipient}\n`)
-  }
-  else
-    await write(`\n`)
-  while (crossCheckErrors.length)
-    await write(crossCheckErrors.shift().concat('\n'))
-  slotNumber++
-}
-outputFile.end()
