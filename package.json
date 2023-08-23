@@ -7,6 +7,7 @@
   "dependencies": {
     "ethers": "6",
     "commander": "11",
-    "dotenv": "16"
+    "dotenv": "16",
+    "lmdb": "2"
   }
 }
