@@ -1,4 +1,6 @@
 import json
+
+import numpy as np
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -79,7 +81,7 @@ def rethdict2apy(d):
 
 
 def recipient_losses(df, total_weeks, rethdict):
-    df_rp_mevboost = df[~df['is_vanilla'] & df['proposer_is_rocketpool']]
+    df_rp_mevboost = df[~df['is_vanilla'] & df['is_rocketpool']]
     num_right = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == True])
     num_wrong = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False])
     num = len(df_rp_mevboost)
@@ -101,19 +103,26 @@ def recipient_losses(df, total_weeks, rethdict):
     # stretch TODO: highlight repeat offenders
 
 
+def mynanmean(win):
+    res = np.nanmean(win)
+    print(f'{win} --> {res}')
+    return res
+
+
 def vanilla_losses(df, total_weeks, rethdict):
     df_temp = df.copy()
-    df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7).mean()
-    df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['proposer_is_rocketpool']]
+    df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7, center=True, min_periods=1).mean()
+    df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['is_rocketpool']]
     n = len(df_rp_vanilla)
-    n_unknown = len(df_rp_vanilla[df_rp_vanilla['max_bid'] == 0])
-    lost_eth = wei2eth(df_rp_vanilla[df_rp_vanilla['max_bid'] != 0]['max_bid'])
+    n_unknown = len(df_rp_vanilla[df_rp_vanilla['max_bid'].isna()])
+    lost_eth = wei2eth(df_rp_vanilla[~df_rp_vanilla['max_bid'].isna()]['max_bid'])
     assert n == len(lost_eth) + n_unknown
     lost_eth.to_csv('./results/vanilla_losses.csv')
     estimated_lost_eth = lost_eth.mean() * n_unknown
     total_loss = sum(lost_eth) + estimated_lost_eth
     # max bid isn't always used (eg, bid gets in too late); 90% is a rough empirical correction
     total_loss *= 0.9
+    # TODO -- subtract out amount actually received -- right now we're calling all of it "lost"
 
     nolossd = rethdict.copy()
     nolossd['end_eth'] += total_loss
@@ -129,8 +138,10 @@ def vanilla_losses(df, total_weeks, rethdict):
     print(f' aka, a {100*(1 - rethdict2apy(rethdict)/rethdict2apy(nolossd)):0.2f}% performance hit')
 
     # sanity check with alternative lost_eth estimate based on nearby blocks
-    proxy_losses = df_rp_vanilla[df_rp_vanilla['max_bid'] == 0]['proxy_max_bid']
-    assert not proxy_losses.isnull().values.any()  # make sure we have values for all
+    #   if alternate method is much higher, that means we're seeing vanilla block more often than
+    #   expected during periods that tend to have high max bids, which is a yellow flag
+    proxy_losses = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()]['proxy_max_bid']
+    assert not proxy_losses.isna().values.any()  # make sure we have values for all
     alt_estimated_lost_eth = wei2eth(sum(proxy_losses))
     print(f'(Sanity checking 2 ways of estimating the unknown loss: {estimated_lost_eth:0.3f} vs '
           f'{alt_estimated_lost_eth:0.3f})')
@@ -150,13 +161,18 @@ def get_sf(ls):
 
 
 def distribution_plots(df):
-    df['max_bid_eth'] = [wei2eth(int(x)) for x in df['max_bid']]
-    df = df[df['max_bid_eth'] != 0]
-    df_rp = df[df['proposer_is_rocketpool']]
+    df['max_bid_eth'] = [x if np.isnan(x) else wei2eth(int(x)) for x in df['max_bid']]
+    df = df[df['max_bid_eth'] != 0]  # *
+    # * can't assess cases without bids; could _try_ filling from nearby, which would catch high
+    # activity periods, but it would miss single block opportunities; this means we'd miss a genre
+    # of thief that is simply never registered to any relays
+    # TODO: check for this genre separately -- we probably won't be able to establish theft, but
+    #   we should be able to establish how common the category is
+    df_rp = df[df['is_rocketpool']]
     df_rp_vanilla = df_rp[df_rp['is_vanilla']]
     df_rp_mev_correct = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == True]
     df_rp_mev_wrong = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == False]
-    df_nonrp = df[df['proposer_is_rocketpool'] == False]
+    df_nonrp = df[df['is_rocketpool'] == False]
     df_nonrp_vanilla = df_nonrp[df_nonrp['is_vanilla']]
 
     all_x, all_sf = get_sf(df['max_bid_eth'])
@@ -200,9 +216,10 @@ def distribution_plots(df):
 def main():
     start_slot, end_slot = 0, 0
 
-    p = 'mevtheft_slot-0-to-0.csv'
+    p = 'rockettheft_slot-0-to-0.csv'
     df_ls = []
     for p in sorted(Path(r'./data').glob('*.csv')):
+        print(p)
         if start_slot == 0:
             start_slot = int(p.name.split('-')[1])
         df_ls.append(pd.read_csv(p))
@@ -210,15 +227,16 @@ def main():
     assert end_slot != 0  # maybe hits if there's no data
     total_weeks = (end_slot - start_slot) * 12 / (60 * 60 * 24 * 7)
     rethdict = get_rethdict(start_slot, end_slot)
+    print(rethdict)
 
     df = pd.concat(df_ls)
     df = df[df['proposer_index'].notna()]
-    df['is_vanilla'] = df['mev_reward'] == 0
+    df['is_vanilla'] = df['mev_reward'].isna()
     df.set_index('slot', inplace=True)
 
     print(f'Analyzing {total_weeks:0.1f} weeks of data')
-    recipient_losses(df, total_weeks, rethdict)
-    vanilla_losses(df, total_weeks, rethdict)
+    # recipient_losses(df, total_weeks, rethdict)
+    # vanilla_losses(df, total_weeks, rethdict)
     distribution_plots(df)
 
 
