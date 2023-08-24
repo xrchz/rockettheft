@@ -124,10 +124,29 @@ async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
 
 /*
 keys to cache:
-<slot>/<relay>/maxBid (null if no bids from this relay)
-<slot>/<relay>/proposed/{mevReward, feeRecipient} (null if a bid from this relay was not proposed)
-<slot>/{blockNumber, proposerIndex, feeRecipient, minipoolAddress (nullAddress if not rocketpool)} (null if this slot was missed)
+<slot>/<relay>/maxBid (string; null if no bids from this relay)
+<slot>/<relay>/proposed {mevReward, feeRecipient} (null if a bid from this relay was not proposed)
+<slot> {blockNumber, proposerIndex, feeRecipient, minipoolAddress (nullAddress if not rocketpool)} (null if this slot was missed)
+<blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
 */
+
+async function getPriorityFees(blockNumber) {
+  const key = `${blockNumber}/prioFees`
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  const block = await provider.getBlock(blockNumber)
+  const gasUsed = block.gasUsed
+  const baseFeePerGas = block.baseFeePerGas
+  let feesPaid = 0n
+  for (const hash of block.transactions) {
+    const receipt = await provider.getTransactionReceipt(hash)
+    feesPaid += receipt.gasUsed * receipt.gasPrice
+  }
+  const baseFees = gasUsed * baseFeePerGas
+  const result = (feesPaid - baseFees).toString()
+  await db.put(key, result)
+  return result
+}
 
 async function populateCache(slotNumber) {
   for (const [relayName, relayApiUrl] of relayApiUrls.entries()) {
