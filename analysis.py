@@ -102,6 +102,7 @@ def fix_bloxroute_missing_bids(df):
 
 
 def recipient_losses_mevboost(df, total_weeks, rethdict):
+    # TODO -- fix this to account for just rETH share
     df_rp_mevboost = df[~df['is_vanilla'] & df['is_rocketpool']].copy()
     num_right = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == True])
     num_wrong = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False])
@@ -126,6 +127,7 @@ def recipient_losses_mevboost(df, total_weeks, rethdict):
 
 
 def recipient_losses_vanilla(df, total_weeks, rethdict):
+    # TODO -- fix this to account for just rETH share
     df_rp_vanilla = df[df['is_vanilla'] & df['is_rocketpool']].copy()
     num_right = len(df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == True])
     num_wrong = len(df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False])
@@ -155,6 +157,7 @@ def recipient_losses_vanilla(df, total_weeks, rethdict):
 
 
 def vanilla_losses(df, total_weeks, rethdict, vanilla_bad_recipient_eth):
+    # TODO -- fix this to account for just rETH share
     df_temp = df.copy()
     df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7, center=True, min_periods=1).mean()
     df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['is_rocketpool']]
