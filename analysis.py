@@ -5,6 +5,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+# max bid isn't always used (eg, bid gets in too late); 90% is a rough empirical correction
+BID2REWARD = 0.9
 """
 ===QUESTIONS TO ADDRESS FOR BOUNTY==
 Detail level
@@ -29,8 +32,11 @@ High level
 """
 
 
-def wei2eth(wei):
-    return wei / 1e18
+def wei2eth(wei_str):
+    try:
+        return int(wei_str) / 1e18
+    except ValueError:
+        return np.nan
 
 
 def slot2timestamp(slot):
@@ -81,14 +87,27 @@ def rethdict2apy(d):
     return 100 * ((d['end_eth'] / d['end_reth']) - (d['start_eth'] / d['start_reth'])) / d['years']
 
 
+def fix_bloxroute_missing_bids(df):
+    ct = 0
+    for ind, row in df.iterrows():
+        missing_bid = np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
+        missing_winning_bid = (~np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
+                               and row['max_bid'] < row['mev_reward'])
+        if missing_bid or missing_winning_bid:
+            assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated')
+            ct += 1
+            df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
+    print(f'Filled in proxy bloxroute max_bids for {ct} slots')
+    return df
+
+
 def recipient_losses_mevboost(df, total_weeks, rethdict):
     df_rp_mevboost = df[~df['is_vanilla'] & df['is_rocketpool']].copy()
     num_right = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == True])
     num_wrong = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False])
     num = len(df_rp_mevboost)
     assert num == num_wrong + num_right
-    lost_eth = wei2eth(
-        df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False]['mev_reward'])
+    lost_eth = df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False]['mev_reward']
     lost_eth.to_csv('./results/recipient_losses.csv')
 
     nolossd = rethdict.copy()
@@ -113,10 +132,10 @@ def recipient_losses_vanilla(df, total_weeks, rethdict):
     num = len(df_rp_vanilla)
     assert num == num_wrong + num_right
     df_rp_vanilla['potential_loss'] = (
-        df_rp_vanilla['max_bid'].fillna(0) * .9 + df_rp_vanilla['priority_fees'].fillna(0))
+        df_rp_vanilla['max_bid'].fillna(0) * BID2REWARD + df_rp_vanilla['priority_fees'].fillna(0))
+    # NOTE: this assumes priority fees are only provided when max_bid is missing
 
-    lost_eth = wei2eth(
-        df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False]['potential_loss'])
+    lost_eth = df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False]['potential_loss']
     lost_eth.to_csv('./results/recipient_losses_vanilla.csv')
 
     nolossd = rethdict.copy()
@@ -129,19 +148,13 @@ def recipient_losses_vanilla(df, total_weeks, rethdict):
     print(f'~{sum(lost_eth)/total_weeks:0.3f} ETH lost per week')
     print(f' APY was ~{rethdict2apy(rethdict):0.2f}% '
           f'when it should have been {rethdict2apy(nolossd):0.2f}%')
-    print("NB: We take a stab at vanilla losses using 0.9*max_bid or sum of priority_fees, but "
+    print("NB: We take a stab at vanilla losses using 90% of max_bid or sum of priority_fees, but "
           "it's possible for vanilla blocks without max_bid to hide offchain fees")
     issue_nodes = df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False]['node_address']
-    return Counter(issue_nodes)
+    return Counter(issue_nodes), sum(lost_eth)
 
 
-def mynanmean(win):
-    res = np.nanmean(win)
-    print(f'{win} --> {res}')
-    return res
-
-
-def vanilla_losses(df, total_weeks, rethdict):
+def vanilla_losses(df, total_weeks, rethdict, vanilla_bad_recipient_eth):
     df_temp = df.copy()
     df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7, center=True, min_periods=1).mean()
     df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['is_rocketpool']]
@@ -149,12 +162,11 @@ def vanilla_losses(df, total_weeks, rethdict):
     unknown_vanilla = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()]
     assert not unknown_vanilla['priority_fees'].isna().any()
     n_unknown = len(unknown_vanilla)
-    # max bid isn't always used (eg, bid gets in too late); 90% is a rough empirical correction
-    lost_eth = wei2eth(df_rp_vanilla[~df_rp_vanilla['max_bid'].isna()]['max_bid']) * .9
+    lost_eth = df_rp_vanilla[~df_rp_vanilla['max_bid'].isna()]['max_bid'] * BID2REWARD
     assert n == len(lost_eth) + n_unknown
     lost_eth.to_csv('./results/vanilla_losses.csv')
     estimated_lost_eth = lost_eth.mean() * n_unknown
-    vanilla_received_eth = wei2eth(df_rp_vanilla['priority_fees'].sum())
+    vanilla_received_eth = df_rp_vanilla['priority_fees'].sum() - vanilla_bad_recipient_eth
     total_loss = sum(lost_eth) + estimated_lost_eth - vanilla_received_eth
 
     nolossd = rethdict.copy()
@@ -172,7 +184,7 @@ def vanilla_losses(df, total_weeks, rethdict):
 
     proxy_losses = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()]['proxy_max_bid']
     assert not proxy_losses.isna().values.any()  # make sure we have values for all
-    alt_estimated_lost_eth = wei2eth(sum(proxy_losses))
+    alt_estimated_lost_eth = sum(proxy_losses)
     print(f"\nSanity checking 2 ways of estimating the unknown loss: {estimated_lost_eth:0.3f} vs "
           f"{alt_estimated_lost_eth:0.3f}")
     print(" if second method is much higher, that means we're seeing vanilla block more often than"
@@ -194,13 +206,12 @@ def get_sf(ls):
 
 
 def distribution_plots(df):
-    df['max_bid_eth'] = [0 if np.isnan(x) else wei2eth(int(x)) for x in df['max_bid']]
     # note - in these plots, we only assess when there's a max bid; a validator that never
     # registered with relays (ie, always vanilla) would not show up in them at all
-    unplotted_df = df[(df['max_bid_eth'] == 0) & df['is_rocketpool']]
+    unplotted_df = df[df['max_bid'].isna() & df['is_rocketpool']]
     unplotted_df.to_csv('./results/unplotted_rp_slots.csv')
 
-    df = df[df['max_bid_eth'] != 0]
+    df = df[~df['max_bid'].isna()]
     df_rp = df[df['is_rocketpool']]
     df_rp_vanilla = df_rp[df_rp['is_vanilla']]
     df_rp_mev = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == True]
@@ -208,12 +219,12 @@ def distribution_plots(df):
     df_nonrp = df[df['is_rocketpool'] == False]
     df_nonrp_vanilla = df_nonrp[df_nonrp['is_vanilla']]
 
-    all_x, all_sf = get_sf(df['max_bid_eth'])
-    rp_x, rp_sf = get_sf(df_rp['max_bid_eth'])
-    rp_vanilla_x, rp_vanilla_sf = get_sf(df_rp_vanilla['max_bid_eth'])
-    rp_mev_x, rp_mev_sf = get_sf(df_rp_mev['max_bid_eth'])
-    df_rp_bad_recipient_x, df_rp_bad_recipient_sf = get_sf(df_rp_bad_recipient['max_bid_eth'])
-    nonrp_vanilla_x, nonrp_vanilla_sf = get_sf(df_nonrp_vanilla['max_bid_eth'])
+    all_x, all_sf = get_sf(df['max_bid'])
+    rp_x, rp_sf = get_sf(df_rp['max_bid'])
+    rp_vanilla_x, rp_vanilla_sf = get_sf(df_rp_vanilla['max_bid'])
+    rp_mev_x, rp_mev_sf = get_sf(df_rp_mev['max_bid'])
+    df_rp_bad_recipient_x, df_rp_bad_recipient_sf = get_sf(df_rp_bad_recipient['max_bid'])
+    nonrp_vanilla_x, nonrp_vanilla_sf = get_sf(df_nonrp_vanilla['max_bid'])
 
     # 5a/5b Global vs RP -- ideally these look extremely similar
     fig, ax = plt.subplots(1)
@@ -229,9 +240,9 @@ def distribution_plots(df):
     # - If vanilla has higher probability for high bids, that is a sign of likely theft
     fig, ax = plt.subplots(1)
     ax.semilogy(rp_mev_x, rp_mev_sf, marker='.', label='RP - correct MEV boost')
+    ax.semilogy(rp_vanilla_x, rp_vanilla_sf, marker='.', label='RP - vanilla')
     ax.semilogy(
         df_rp_bad_recipient_x, df_rp_bad_recipient_sf, marker='.', label='RP - wrong recipient')
-    ax.semilogy(rp_vanilla_x, rp_vanilla_sf, marker='.', label='RP - vanilla')
     ax.legend()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
@@ -258,7 +269,14 @@ def main():
     for p in sorted(Path(r'./data').glob('*.csv')):
         if start_slot == 0:
             start_slot = int(p.name.split('-')[1])
-        df_ls.append(pd.read_csv(p))
+        df_ls.append(
+            pd.read_csv(
+                p,
+                converters={
+                    'max_bid': wei2eth,
+                    'mev_reward': wei2eth,
+                    'priority_fees': wei2eth,
+                }))
     end_slot = int(p.name.split('-')[3].split('.')[0])
     assert end_slot != 0  # maybe hits if there's no data
     total_weeks = (end_slot - start_slot) * 12 / (60 * 60 * 24 * 7)
@@ -270,13 +288,15 @@ def main():
     df['is_vanilla'] = df['mev_reward'].isna()
     df.set_index('slot', inplace=True)
 
-    print(f'Analyzing {total_weeks:0.1f} weeks of data')
+    print(f'Analyzing {total_weeks:0.1f} weeks of data ({end_slot - start_slot} slots)')
+    df = fix_bloxroute_missing_bids(df.copy())
+
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), total_weeks, rethdict.copy())
-    c_rcpt_van = recipient_losses_vanilla(df.copy(), total_weeks, rethdict.copy())
-    c_van = vanilla_losses(df.copy(), total_weeks, rethdict.copy())
+    c_rcpt_van, van_bad_rcpt_eth = recipient_losses_vanilla(df.copy(), total_weeks, rethdict.copy())
+    c_van = vanilla_losses(df.copy(), total_weeks, rethdict.copy(), van_bad_rcpt_eth)
     c_unplotted = distribution_plots(df.copy())
 
-    print('=== Issue counts by node address ===')
+    print('\n=== RP issue counts by node address ===')
     print(f'🚩Wrong recipient used with MEV-boost: {c_rcpt_mev}')
     print(f'🚩Wrong recipient used with vanilla: {c_rcpt_van}')
     print(f'⚠ No max bid: {c_unplotted}')  # not registered w/relays? hard to differentiate theft
