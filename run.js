@@ -107,18 +107,28 @@ async function getMinipoolAddress(index, blockTag) {
   return await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
 }
 
-async function getCorrectFeeRecipient(minipoolAddress, blockTag) {
+async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(
     minipoolAddress,
     ['function getNodeAddress() view returns (address)'], provider)
   const nodeAddress = await minipool.getNodeAddress()
   const rocketNodeManager = new ethers.Contract(
     await getRocketAddress('rocketNodeManager', blockTag),
-    ['function getSmoothingPoolRegistrationState(address) view returns (bool)'], provider)
+    ['function getSmoothingPoolRegistrationState(address) view returns (bool)',
+     'function getAverageNodeFee(address) view returns (uint256)'], provider)
   const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
   const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
   const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
-  return {nodeAddress, inSmoothingPool, correctFeeRecipient}
+  const avgFee = await rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag}).then(n => n.toString())
+  return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
+}
+
+async function getEthCollatRatio(nodeAddress, blockTag) {
+  const rocketNodeStaking = new ethers.Contract(
+    await getRocketAddress('rocketNodeStaking', blockTag),
+    ['function getNodeETHCollateralisationRatio(address) view returns (uint256)'], provider)
+  return await rocketNodeStaking.getNodeETHCollateralisationRatio(
+    nodeAddress, {blockTag}).then(n => n.toString())
 }
 
 /*
@@ -212,7 +222,8 @@ const write = options.output ? async s => new Promise(
 const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
 if (options.output) console.log(`Writing to ${fileName}`)
 await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
-await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees\n')
+await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,')
+await write('priority_fees,avg_fee,eth_collat_ratio\n')
 
 let slotNumber = firstSlot
 while (slotNumber <= lastSlot) {
@@ -223,7 +234,7 @@ while (slotNumber <= lastSlot) {
   const {blockNumber, proposerIndex, feeRecipient, minipoolAddress} = db.get(`${slotNumber}`) || {}
   if (typeof blockNumber == 'undefined') {
     console.log(`Slot ${slotNumber}: Execution block missing`)
-    await write(',,,,,,,,,\n')
+    await write(',,,,,,,,,,,\n')
     slotNumber++
     continue
   }
@@ -258,16 +269,18 @@ while (slotNumber <= lastSlot) {
   await write(`${proposerIndex},${isRocketpool},`)
   console.log(`Slot ${slotNumber}: Proposer index ${proposerIndex} (${isRocketpool ? 'RP' : 'not RP'})`)
   if (isRocketpool) {
-    const {nodeAddress, inSmoothingPool, correctFeeRecipient} = await getCorrectFeeRecipient(minipoolAddress, blockNumber)
+    const {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee} = await getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockNumber)
     const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
     const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
-    const priorityFees = maxBid ? '' : await getPriorityFees(blockNumber)
-    await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees}\n`)
+    const priorityFees = mevReward ? '' : await getPriorityFees(blockNumber)
+    const ethCollatRatio = await getEthCollatRatio(nodeAddress)
+    await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees},${avgFee},${ethCollatRatio}\n`)
     console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient}`)
+    console.log(`Slot ${slotNumber}: Average fee ${ethers.formatEther(avgFee)}, ETH collat ${ethers.formatEther(ethCollatRatio)}`)
     if (priorityFees) console.log(`Slot ${slotNumber}: Priority fees ${ethers.formatEther(priorityFees)} ETH`)
   }
   else {
-    await write(',,,\n')
+    await write(',,,,,\n')
   }
   slotNumber++
 }
