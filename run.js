@@ -32,6 +32,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .option('-b, --bn <url>', 'Beacon node API endpoint URL (overrides BN_URL environment variable, default: http://localhost:5052)')
        .requiredOption('-s, --slot <num>', 'First slot to process')
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
+       .option('-n, --no-output', 'Do not produce output csv file')
 
 program.parse()
 const options = program.opts()
@@ -203,14 +204,15 @@ const firstSlot = parseInt(options.slot)
 const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
 if (lastSlot < firstSlot) throw new Error(`invalid slot range: ${firstSlot}-${lastSlot}`)
 
-  const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
-  const outputFile = createWriteStream(fileName)
-  const write = async s => new Promise(
-    resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
-  )
-  console.log(`Writing to ${fileName}`)
-  await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
-  await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees\n')
+const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
+const outputFile = options.output ? createWriteStream(fileName) : null
+const write = options.output ? async s => new Promise(
+  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
+) : s => null
+const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
+if (options.output) console.log(`Writing to ${fileName}`)
+await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
+await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees\n')
 
 let slotNumber = firstSlot
 while (slotNumber <= lastSlot) {
@@ -242,7 +244,7 @@ while (slotNumber <= lastSlot) {
         console.error(`Slot ${slotNumber}: Duplicate MEV reward ${mevRewardRelay} for ${
           ethers.formatEther(mevReward || '0')} vs ${relayName} for ${
           ethers.formatEther(relayMevReward || '0')}`)
-        await new Promise(resolve => outputFile.end(resolve))
+        await endOut()
         process.exit(1)
       }
       [mevReward, mevRewardRelay, mevFeeRecipient] = [relayMevReward, relayName, relayFeeRecipient]
@@ -269,4 +271,4 @@ while (slotNumber <= lastSlot) {
   }
   slotNumber++
 }
-await new Promise(resolve => outputFile.end(resolve))
+await endOut()
