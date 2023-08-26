@@ -121,7 +121,7 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
     ], provider)
   const minipoolCount = await rocketMinipoolManager.getNodeMinipoolCount(nodeAddress, {blockTag})
   let depositWeightTotal = 0n
-  const countAndFeesByWeight = new Map()
+  const feesByWeight = new Map()
   for (const i of Array(parseInt(minipoolCount)).fill().keys()) {
     const minipoolAddress = await rocketMinipoolManager.getNodeMinipoolAt(nodeAddress, i, {blockTag})
     const minipool = new ethers.Contract(minipoolAddress,
@@ -133,21 +133,13 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
     const nodeFee = await minipool.getNodeFee({blockTag})
     const depositWeight = launchBalance - nodeDeposit
     depositWeightTotal += depositWeight
-    if (!countAndFeesByWeight.has(depositWeight))
-      countAndFeesByWeight.set(depositWeight, {count: 1n, fees: nodeFee})
-    else countAndFeesByWeight.set(depositWeight,
-      (() => {
-        let {count, fees} = countAndFeesByWeight.get(depositWeight)
-        count++
-        fees += nodeFee
-        return {count, fees}
-      })())
+    if (!feesByWeight.has(depositWeight)) feesByWeight.set(depositWeight, nodeFee)
+    else feesByWeight.set(depositWeight, feesByWeight.get(depositWeight) + nodeFee)
   }
   let averageNodeFee = 0n
-  for (const [depositWeight, {count, fees}] of countAndFeesByWeight) {
+  for (const [depositWeight, fees] of feesByWeight.entries()) {
     const scaledWeight = (depositWeight /* * count */ * oneEther) / depositWeightTotal
-    const averageFee = fees /* / count */
-    averageNodeFee += (averageFee * scaledWeight) / count
+    averageNodeFee += (fees * scaledWeight) /* / count */
   }
   return averageNodeFee / oneEther
 }
