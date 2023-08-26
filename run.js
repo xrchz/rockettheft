@@ -107,6 +107,51 @@ async function getMinipoolAddress(index, blockTag) {
   return await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
 }
 
+const stakingStatus = 2
+const oneEther = ethers.parseEther('1')
+const launchBalance = ethers.parseEther('32')
+
+async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
+  if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag}))
+    return rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag})
+  const rocketMinipoolManager = new ethers.Contract(
+    await getRocketAddress('rocketMinipoolManager', blockTag),
+    ['function getNodeMinipoolCount(address) view returns (uint256)',
+     'function getNodeMinipoolAt(address, uint256) view returns (address)',
+    ], provider)
+  const minipoolCount = await rocketMinipoolManager.getNodeMinipoolCount(nodeAddress, {blockTag})
+  let depositWeightTotal = 0n
+  const countAndFeesByWeight = new Map()
+  for (const i of Array(parseInt(minipoolCount)).fill().keys()) {
+    const minipoolAddress = await rocketMinipoolManager.getNodeMinipoolAt(nodeAddress, i, {blockTag})
+    const minipool = new ethers.Contract(minipoolAddress,
+      ['function getNodeDepositBalance() view returns (uint256)',
+       'function getStatus() view returns (uint8)',
+       'function getNodeFee() view returns (uint256)'], provider)
+    if (await minipool.getStatus({blockTag}).then(s => s != stakingStatus)) continue
+    const nodeDeposit = await minipool.getNodeDepositBalance({blockTag})
+    const nodeFee = await minipool.getNodeFee({blockTag})
+    const depositWeight = launchBalance - nodeDeposit
+    depositWeightTotal += depositWeight
+    if (!countAndFeesByWeight.has(depositWeight))
+      countAndFeesByWeight.set(depositWeight, {count: 1n, fees: nodeFee})
+    else countAndFeesByWeight.set(depositWeight,
+      (() => {
+        let {count, fees} = countAndFeesByWeight.get(depositWeight)
+        count++
+        fees += nodeFee
+        return {count, fees}
+      })())
+  }
+  let averageNodeFee = 0n
+  for (const [depositWeight, {count, fees}] of countAndFeesByWeight) {
+    const scaledWeight = (depositWeight * oneEther) / depositWeightTotal
+    const averageFee = fees / count
+    averageNodeFee += (averageFee * scaledWeight) / count
+  }
+  return averageNodeFee / oneEther
+}
+
 async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(
     minipoolAddress,
@@ -115,11 +160,12 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
   const rocketNodeManager = new ethers.Contract(
     await getRocketAddress('rocketNodeManager', blockTag),
     ['function getSmoothingPoolRegistrationState(address) view returns (bool)',
+     'function getFeeDistributorInitialised(address) view returns (bool)',
      'function getAverageNodeFee(address) view returns (uint256)'], provider)
   const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
   const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
   const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
-  const avgFee = await rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag}).then(n => n.toString())
+  const avgFee = await getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag).then(n => n.toString())
   return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
 }
 
