@@ -145,8 +145,8 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   }
   let averageNodeFee = 0n
   for (const [depositWeight, {count, fees}] of countAndFeesByWeight) {
-    const scaledWeight = (depositWeight * oneEther) / depositWeightTotal
-    const averageFee = fees / count
+    const scaledWeight = (depositWeight /* * count */ * oneEther) / depositWeightTotal
+    const averageFee = fees /* / count */
     averageNodeFee += (averageFee * scaledWeight) / count
   }
   return averageNodeFee / oneEther
