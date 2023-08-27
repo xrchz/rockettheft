@@ -45,21 +45,43 @@ Note that the current method gets:
 Running `analysis.py` provides some text in addition to making the plots:
 
 ```
-=== Recipient losses ===
-1: 0 of 1977 used wrong fee recipient (see results/recipient_losses.csv)
+{'start_eth': 224455.9243660949, 'start_reth': 211241.85867428905, 'end_eth': 539322.5148554122, 'end_reth': 499018.56894404785, 'years': 0.44680165792075444}
+Analyzing 23.3 weeks of data (1174999 slots)
+Filled in proxy bloxroute max_bids for 149 slots
+
+=== MEV-Boost Recipient losses ===
+1: 0 of 345 MEV-boost slots used wrong fee recipient (see results/recipient_losses.csv)
 3a: 0.000 total ETH lost due to wrong fee recipient
 3b: 0.000 ETH lost per week
-3c: APY was 4.35% when it should have been 4.35%
+3c: APY was 4.08% when it should have been 4.08%
+
+=== Vanilla Recipient losses ===
+ 1 of 33 vanilla slots used wrong fee recipient (see results/recipient_losses_vanilla.csv)
+~0.011 total ETH lost due to wrong fee recipient
+~0.000 ETH lost per week
+ APY was ~4.08% when it should have been 4.08%
+NB: We take a stab at vanilla losses using 90% of max_bid or sum of priority_fees, but it's possible for vanilla blocks without max_bid to hide offchain fees
 
 === Vanilla losses ===
-There were 129 vanilla RP blocks
-  91 had bids; we can get loss (see results/vanilla_losses.csv)
-  38 of them had no bid; we'll use the mean of the above as a guess
-4a: ~7.831 known ETH lost due to not using relays
-4b: ~4.643 ETH lost per week
-4c: APY was 4.35% when it could have been ~4.46%
-  aka, a 2.51% performance hit
-(Sanity checking 2 ways of estimating the unknown loss: 2.563 vs 2.368)
+There were 33 vanilla RP blocks
+  24 had bids; we can get ~loss (see results/vanilla_losses.csv)
+  9 of them had no bid; we'll use the mean of the above as a guess
+4a: ~0.607 known ETH lost due to not using relays
+4b: ~0.026 ETH lost per week
+4c: APY was 4.08% when it could have been ~4.08%
+ aka, a 0.01% performance hit
+
+Sanity checking 2 ways of estimating the unknown loss: 0.187 vs 0.361
+ if second method is much higher, that means we're seeing vanilla block more often than expected during periods that tend to have high max bids, which is a yellow flag
+
+=== RP issue counts by node address ===
+🚩Wrong recipient used with MEV-boost: Counter()
+🚩Wrong recipient used with vanilla: Counter({'0x4680B01D48f107928Dc75C3Ae5C8296D8cB0b5f7': 1})
+⚠ No max bid: Counter({'0x6BBbA538C14D36eE92dd3941Afe52736c5cFb842': 5, '0x4680B01D48f107928Dc75C3Ae5C8296D8cB0b5f7': 1, '0xB81E87018Ec50d17116310c87b36622807581fa6': 1, '0x5280B7aD2aFF8872C4110A0EA2E919c616F55D19': 1, '0x2F8ef05D6AAAe98Af0D10Ef4Cec24750fb819Ce2': 1})
+⚠ Vanilla blocks: Counter({'0xb8ed9ea221bf33d37360A76DDD52bA7b1E66AA5C': 7, '0x6BBbA538C14D36eE92dd3941Afe52736c5cFb842': 5, '0xDdCcE65862fb2bD21271C71cf0b1b54F64128C33': 2, '0xED8Da4DAF5B1b112fD27123ca414496cf033A3bb': 2, '0x4680B01D48f107928Dc75C3Ae5C8296D8cB0b5f7': 1, '0x71dd99490C5e36A22B2a73f31225fA5Fa40223D1': 1, '0xD75b16EB967546591199AC6f4bA0D51C123E6cf6': 1, '0xB81E87018Ec50d17116310c87b36622807581fa6': 1, '0xca317A4ecCbe0Dd5832dE2A7407e3c03F88b2CdD': 1, '0x17Fa597cEc16Ab63A7ca00Fb351eb4B29Ffa6f46': 1, '0x63e7549Ea16F52Bcb0415B308F17f3FeE6415138': 1, '0x5280B7aD2aFF8872C4110A0EA2E919c616F55D19': 1, '0x4f9861628107300FbB4981eA22B85Ec0c348fd5A': 1, '0x949953B4aB9748992f3B9841E2f510d502Ec2C8E': 1, '0x2b6fCa9AD7EBd5408dB009f0DF087Ffd934cF98e': 1, '0xaE522d18D9eDf0b5c6997Dfc79b3eAD1363059F2': 1, '0xc5D291607600044348E5014404cc18394BD1D57d': 1, '0x7f733E416d96a6CC3D0907dd35b7c3C7fF23ddcf': 1, '0x2F8ef05D6AAAe98Af0D10Ef4Cec24750fb819Ce2': 1, '0x47730Ef452712168a1d05f4E5c4c123dcc5f8550': 1, '0x2C1ec76e2fB8B8f070b4687C122e8dee0EC79A63': 1})
+
+Process finished with exit code 0
+
 ```
 
 The main take-away I found here is that vanilla blocks do represent a real performance hit.

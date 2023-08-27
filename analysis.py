@@ -102,13 +102,13 @@ def fix_bloxroute_missing_bids(df):
 
 
 def recipient_losses_mevboost(df, total_weeks, rethdict):
-    # TODO -- fix this to account for just rETH share
     df_rp_mevboost = df[~df['is_vanilla'] & df['is_rocketpool']].copy()
+    wrong_df = df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False].copy()
+    num_wrong = len(wrong_df)
     num_right = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == True])
-    num_wrong = len(df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False])
     num = len(df_rp_mevboost)
     assert num == num_wrong + num_right
-    lost_eth = df_rp_mevboost[df_rp_mevboost['correct_fee_recipient'] == False]['mev_reward']
+    lost_eth = wrong_df['mev_reward'] * wrong_df['reth_portion']
     lost_eth.to_csv('./results/recipient_losses.csv')
 
     nolossd = rethdict.copy()
@@ -127,17 +127,17 @@ def recipient_losses_mevboost(df, total_weeks, rethdict):
 
 
 def recipient_losses_vanilla(df, total_weeks, rethdict):
-    # TODO -- fix this to account for just rETH share
     df_rp_vanilla = df[df['is_vanilla'] & df['is_rocketpool']].copy()
+    wrong_df = df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False].copy()
+    num_wrong = len(wrong_df)
     num_right = len(df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == True])
-    num_wrong = len(df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False])
     num = len(df_rp_vanilla)
     assert num == num_wrong + num_right
-    df_rp_vanilla['potential_loss'] = (
-        df_rp_vanilla['max_bid'].fillna(0) * BID2REWARD + df_rp_vanilla['priority_fees'].fillna(0))
+    wrong_df['potential_loss'] = (
+        wrong_df['max_bid'].fillna(0) * BID2REWARD + wrong_df['priority_fees'].fillna(0))
     # NOTE: this assumes priority fees are only provided when max_bid is missing
 
-    lost_eth = df_rp_vanilla[df_rp_vanilla['correct_fee_recipient'] == False]['potential_loss']
+    lost_eth = wrong_df['potential_loss'] * wrong_df['reth_portion']
     lost_eth.to_csv('./results/recipient_losses_vanilla.csv')
 
     nolossd = rethdict.copy()
@@ -157,27 +157,32 @@ def recipient_losses_vanilla(df, total_weeks, rethdict):
 
 
 def vanilla_losses(df, total_weeks, rethdict, vanilla_bad_recipient_eth):
-    # TODO -- fix this to account for just rETH share
     df_temp = df.copy()
     df_temp['proxy_max_bid'] = df_temp['max_bid'].rolling(7, center=True, min_periods=1).mean()
     df_rp_vanilla = df_temp[df_temp['is_vanilla'] & df_temp['is_rocketpool']]
     n = len(df_rp_vanilla)
-    unknown_vanilla = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()]
+    known_vanilla = df_rp_vanilla[~df_rp_vanilla['max_bid'].isna()].copy()
+    unknown_vanilla = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()].copy()
     assert not unknown_vanilla['priority_fees'].isna().any()
     n_unknown = len(unknown_vanilla)
-    lost_eth = df_rp_vanilla[~df_rp_vanilla['max_bid'].isna()]['max_bid'] * BID2REWARD
-    assert n == len(lost_eth) + n_unknown
+    lost_eth = (known_vanilla['max_bid'] * BID2REWARD -
+                known_vanilla['priority_fees']) * known_vanilla['reth_portion']
     lost_eth.to_csv('./results/vanilla_losses.csv')
-    estimated_lost_eth = lost_eth.mean() * n_unknown
-    vanilla_received_eth = df_rp_vanilla['priority_fees'].sum() - vanilla_bad_recipient_eth
-    total_loss = sum(lost_eth) + estimated_lost_eth - vanilla_received_eth
+    # note that lost_eth is a best guess on what an mev relay "should" have given us, but it's not
+    # an actual measured value; as a result, we can even have a "negative" loss.
+
+    # use mean to fill missing max bids
+    unknown_vanilla['max_bid'] = known_vanilla['max_bid'].mean()
+    unknown_lost_eth = (unknown_vanilla['max_bid'] * BID2REWARD -
+                        unknown_vanilla['priority_fees']) * unknown_vanilla['reth_portion']
+    total_loss = sum(lost_eth) + sum(unknown_lost_eth) + vanilla_bad_recipient_eth
 
     nolossd = rethdict.copy()
     nolossd['end_eth'] += total_loss
 
     print('\n=== Vanilla losses ===')
     print(f'There were {n} vanilla RP blocks')
-    print(f'  {len(lost_eth)} had bids; we can get loss (see results/vanilla_losses.csv)')
+    print(f'  {len(lost_eth)} had bids; we can get ~loss (see results/vanilla_losses.csv)')
     print(f"  {n_unknown} of them had no bid; we'll use the mean of the above as a guess")
     print(f'4a: ~{total_loss:0.3f} known ETH lost due to not using relays')
     print(f'4b: ~{total_loss / total_weeks:0.3f} ETH lost per week')
@@ -185,11 +190,11 @@ def vanilla_losses(df, total_weeks, rethdict, vanilla_bad_recipient_eth):
           f'when it could have been ~{rethdict2apy(nolossd):0.2f}%')
     print(f' aka, a {100*(1 - rethdict2apy(rethdict)/rethdict2apy(nolossd)):0.2f}% performance hit')
 
-    proxy_losses = df_rp_vanilla[df_rp_vanilla['max_bid'].isna()]['proxy_max_bid']
-    assert not proxy_losses.isna().values.any()  # make sure we have values for all
-    alt_estimated_lost_eth = sum(proxy_losses)
-    print(f"\nSanity checking 2 ways of estimating the unknown loss: {estimated_lost_eth:0.3f} vs "
-          f"{alt_estimated_lost_eth:0.3f}")
+    proxy_lost_eth = (unknown_vanilla['proxy_max_bid'] * BID2REWARD -
+                      unknown_vanilla['priority_fees']) * unknown_vanilla['reth_portion']
+    assert not unknown_vanilla['proxy_max_bid'].isna().values.any()  # confirm values for all
+    print(f"\nSanity checking 2 ways of estimating the unknown loss: {sum(unknown_lost_eth):0.3f} "
+          f"vs {sum(proxy_lost_eth):0.3f}")
     print(" if second method is much higher, that means we're seeing vanilla block more often than"
           " expected during periods that tend to have high max bids, which is a yellow flag")
 
@@ -279,6 +284,8 @@ def main():
                     'max_bid': wei2eth,
                     'mev_reward': wei2eth,
                     'priority_fees': wei2eth,
+                    'avg_fee': wei2eth,
+                    'eth_collat_ratio': wei2eth,  # (node capital + user capital) / node capital
                 }))
     end_slot = int(p.name.split('-')[3].split('.')[0])
     assert end_slot != 0  # maybe hits if there's no data
@@ -287,8 +294,10 @@ def main():
     print(rethdict)
 
     df = pd.concat(df_ls)
-    df = df[df['proposer_index'].notna()]
-    df['is_vanilla'] = df['mev_reward'].isna()
+    df = df[df['proposer_index'].notna()]  # get rid of slots without a block
+    df['is_vanilla'] = df['mev_reward'].isna()  # make a convenience column
+    assert ((sum(df['avg_fee'] > 0.2) + sum(df['avg_fee'] < 0.05)) == 0)  # sanity check
+    df['reth_portion'] = (1 - (df['avg_fee'])) * (1 - (1 / df['eth_collat_ratio']))
     df.set_index('slot', inplace=True)
 
     print(f'Analyzing {total_weeks:0.1f} weeks of data ({end_slot - start_slot} slots)')
@@ -311,3 +320,5 @@ if __name__ == '__main__':
 
 # TODO check if theres's a period where nimbus bug caused issues that we should exclude
 #      that data; it might be May/June 2023
+# stretch todo -- for vanilla losses, save off each type of loss
+# stretch todo -- for specific losses, plot over time
