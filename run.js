@@ -33,22 +33,29 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .requiredOption('-s, --slot <num>', 'First slot to process')
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
        .option('-n, --no-output', 'Do not produce output csv file')
+       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 response before retrying', 5)
 
 program.parse()
 const options = program.opts()
 
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
+const delayms = parseInt(options.delay) * 1000
 
-function fetchRelayApi(relayApiUrl, path, params) {
-  // TODO: rate-limit if necessary
+async function fetchRelayApi(relayApiUrl, path, params) {
   const url = new URL(path.concat('?', params.toString()), relayApiUrl)
   const username = url.username
   url.username = ''
-  return fetch(url,
-    {credentials: 'include',
-     headers: {Authorization: `Basic ${Buffer.from(username.concat(':')).toString('base64')}`}
-    })
+  const options = {
+    credentials: 'include',
+    headers: {Authorization: `Basic ${Buffer.from(username.concat(':')).toString('base64')}`}
+  }
+  let response = await fetch(url, options)
+  while (response.status === 429)
+    response = await (new Promise(resolve =>
+      setTimeout(resolve, delayms))).then(
+        () => fetch(url, options))
+  return response
 }
 
 async function getPayload(slotNumber, relayName, relayApiUrl) {
