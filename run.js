@@ -115,8 +115,14 @@ const oneEther = ethers.parseEther('1')
 const launchBalance = ethers.parseEther('32')
 
 async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
-  if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag}))
-    return rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag})
+  const key = `${blockTag}/${nodeAddress}/avgFee`
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag})) {
+    const result = await rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag})
+    await db.put(key, result)
+    return result
+  }
   const rocketMinipoolManager = new ethers.Contract(
     await getRocketAddress('rocketMinipoolManager', blockTag),
     ['function getNodeMinipoolCount(address) view returns (uint256)',
@@ -144,7 +150,9 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
     const scaledWeight = (depositWeight /* * count */ * oneEther) / depositWeightTotal
     averageNodeFee += (fees * scaledWeight) /* / count */
   }
-  return averageNodeFee / oneEther
+  const result = averageNodeFee / oneEther
+  await db.put(key, result)
+  return result
 }
 
 async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
@@ -168,11 +176,16 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
 }
 
 async function getEthCollatRatio(nodeAddress, blockTag) {
+  const key = `${blockTag}/${nodeAddress}/ethCollatRatio`
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
   const rocketNodeStaking = new ethers.Contract(
     await getRocketAddress('rocketNodeStaking', blockTag),
     ['function getNodeETHCollateralisationRatio(address) view returns (uint256)'], provider)
-  return await rocketNodeStaking.getNodeETHCollateralisationRatio(
+  const result = await rocketNodeStaking.getNodeETHCollateralisationRatio(
     nodeAddress, {blockTag}).then(n => n.toString())
+  await db.put(key, result)
+  return result
 }
 
 /*
@@ -180,6 +193,8 @@ keys to cache:
 <slot>/<relay>/maxBid (string; null if no bids from this relay)
 <slot>/<relay>/proposed {mevReward, feeRecipient} (null if a bid from this relay was not proposed)
 <slot> {blockNumber, proposerIndex, feeRecipient, minipoolAddress (nullAddress if not rocketpool)} (null if this slot was missed)
+<blockNumber>/<nodeAddress>/avgFee (string or missing)
+<blockNumber>/<nodeAddress>/ethCollatRatio (string or missing)
 <blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
 */
 
