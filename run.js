@@ -317,7 +317,7 @@ while (slotNumber <= lastSlot) {
     const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
     const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
     const priorityFees = mevReward ? '' : await getPriorityFees(blockNumber)
-    const ethCollatRatio = await getEthCollatRatio(nodeAddress)
+    const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
     await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees},${avgFee},${ethCollatRatio}\n`)
     console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient}`)
     console.log(`Slot ${slotNumber}: Average fee ${ethers.formatEther(avgFee)}, ETH collat ${ethers.formatEther(ethCollatRatio)}`)
