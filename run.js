@@ -93,11 +93,7 @@ async function getBids(slotNumber, relayName, relayApiUrl) {
 const nullAddress = '0x0000000000000000000000000000000000000000'
 const rocketStorage = new ethers.Contract(rocketStorageAddress,
   ['function getAddress(bytes32) view returns (address)'], provider)
-const getRocketAddress = (name, blockTag) => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`), blockTag ? {blockTag} : {})
-
-const rocketNodeDistributorFactory = new ethers.Contract(
-  await getRocketAddress('rocketNodeDistributorFactory'),
-  ['function getProxyAddress(address) view returns (address)'], provider)
+const getRocketAddress = (name, blockTag) => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`), {blockTag})
 
 async function getMinipoolAddress(index, blockTag) {
   const path = `/eth/v1/beacon/states/finalized/validators/${index}`
@@ -163,7 +159,10 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
      'function getAverageNodeFee(address) view returns (uint256)'], provider)
   const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
   const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
-  const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress)
+  const rocketNodeDistributorFactory = new ethers.Contract(
+    await getRocketAddress('rocketNodeDistributorFactory', blockTag),
+    ['function getProxyAddress(address) view returns (address)'], provider)
+  const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress, {blockTag})
   const avgFee = await getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag).then(n => n.toString())
   return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
 }
