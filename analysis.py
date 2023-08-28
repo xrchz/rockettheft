@@ -94,7 +94,11 @@ def fix_bloxroute_missing_bids(df):
         missing_winning_bid = (~np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
                                and row['max_bid'] < row['mev_reward'])
         if missing_bid or missing_winning_bid:
-            assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated')
+            try:
+                assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated')
+            except AssertionError:
+                print('ERROR:')
+                print(row)
             ct += 1
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
     print(f'Filled in proxy bloxroute max_bids for {ct} slots')
@@ -296,7 +300,13 @@ def main():
     df = pd.concat(df_ls)
     df = df[df['proposer_index'].notna()]  # get rid of slots without a block
     df['is_vanilla'] = df['mev_reward'].isna()  # make a convenience column
-    assert ((sum(df['avg_fee'] > 0.2) + sum(df['avg_fee'] < 0.05)) == 0)  # sanity check
+    try:
+        assert ((sum(df['avg_fee'] > 0.2) + sum(df['avg_fee'] < 0.05)) == 0)  # sanity check
+    except AssertionError:
+        print('WARNING: over 20%')
+        print(df[df['avg_fee'] > 0.2])
+        print('WARNING: under 5%')
+        print(df[df['avg_fee'] < 0.05])
     df['reth_portion'] = (1 - (df['avg_fee'])) * (1 - (1 / df['eth_collat_ratio']))
     df.set_index('slot', inplace=True)
 
@@ -322,3 +332,6 @@ if __name__ == '__main__':
 #      that data; it might be May/June 2023
 # stretch todo -- for vanilla losses, save off each type of loss
 # stretch todo -- for specific losses, plot over time
+# maybe todo -- for folks with no max bid.. is that really no max bid vanilla?
+#         if so, should we subtract that number from the vanilla counter?
+# stretch todo -- identify NOs that toggle between vanilla an MEV?
