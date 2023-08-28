@@ -175,15 +175,20 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
   return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
 }
 
+const atlasVersion = 4
+
 async function getEthCollatRatio(nodeAddress, blockTag) {
   const key = `${blockTag}/${nodeAddress}/ethCollatRatio`
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   const rocketNodeStaking = new ethers.Contract(
     await getRocketAddress('rocketNodeStaking', blockTag),
-    ['function getNodeETHCollateralisationRatio(address) view returns (uint256)'], provider)
-  const result = await rocketNodeStaking.getNodeETHCollateralisationRatio(
-    nodeAddress, {blockTag}).then(n => n.toString())
+    ['function getNodeETHCollateralisationRatio(address) view returns (uint256)',
+     'function version() view returns (uint8)'], provider)
+  const result = await rocketNodeStaking.version({blockTag}).then(
+    v => parseInt(v) < atlasVersion ? 2n * oneEther :
+    rocketNodeStaking.getNodeETHCollateralisationRatio(
+      nodeAddress, {blockTag})).then(n => n.toString())
   await db.put(key, result)
   return result
 }
