@@ -97,7 +97,7 @@ def fix_bloxroute_missing_bids(df):
             try:
                 assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated')
             except AssertionError:
-                print('ERROR:')
+                print('WARNING: missing bid other than bloxroute')
                 print(row)
             ct += 1
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
@@ -246,6 +246,8 @@ def distribution_plots(df):
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig('./results/global_vs_rp.png', bbox_inches='tight')
+    ax.set_xscale('log')
+    fig.savefig('./results/global_vs_rp_loglog.png', bbox_inches='tight')
 
     # 5c/5d/5e RP correct vs not
     # - If wrong recipient has higher probability for high bids, that is a very clear sign of theft
@@ -259,6 +261,8 @@ def distribution_plots(df):
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig('./results/rp_subcategories.png', bbox_inches='tight')
+    ax.set_xscale('log')
+    fig.savefig('./results/rp_subcategories_loglog.png', bbox_inches='tight')
 
     # yokem suggestion Vanilla Blocks - RP vs non
     fig, ax = plt.subplots(1)
@@ -268,6 +272,8 @@ def distribution_plots(df):
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig('./results/vanilla_rp_vs_nonrp.png', bbox_inches='tight')
+    ax.set_xscale('log')
+    fig.savefig('./results/vanilla_rp_vs_nonrp_loglog.png', bbox_inches='tight')
 
     issue_nodes = unplotted_df['node_address']
     return Counter(issue_nodes)
@@ -327,6 +333,15 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# Notes:
+# - There was a bug based on using getMinipoolAt instead of getNodeMinipoolAt that was fixed in
+#   a hotfix executed 2022-11-10. This means the reth share we calculate may or may not be right
+#   based on smoothing pool participation and when the rewards were distributed. Calling it "close
+#   enough" and simply using what the contract returns despite knowing that may be slightly off for
+#   that period
+# - MEV grace period ended at slot 5203679 (2022-11-24 05:35:39Z UTC); see
+#   https://discord.com/channels/405159462932971535/405163979141545995/1044108182513012796
 
 # TODO check if theres's a period where nimbus bug caused issues that we should exclude
 #      that data; it might be May/June 2023

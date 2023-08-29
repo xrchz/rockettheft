@@ -9,7 +9,9 @@ We'll start high level and then go deeper.
 This first draft is looking at ~1.7 weeks of data.
 
 ### Global vs RP sanity check
-![image](./results/global_vs_rp.png)
+| ![image](./results/global_vs_rp.png)   | ![image](./results/global_vs_rp_loglog.png) |
+|:--------------------------------------:|:-------------------------------------------:|
+
 
 The plot above shows a survival function for bids on all blocks and just RP blocks. This is mostly a
 sanity check looking at if RP is being consistently lucky or unlucky, and we see no evidence that we
@@ -17,7 +19,8 @@ get better or worse bids. The curves move alongside each other well until data b
 be relied on at all.
 
 ### Is there systematic theft?
-![image](./results/rp_subcategories.png)
+| ![image](./results/rp_subcategories.png)  | ![image](./results/rp_subcategories_loglog.png) |
+|:-----------------------------------------:|:-----------------------------------------------:|
 
 The plot above is likely the most important item in this analysis. It shows whether we routinely see
 high bids on blocks where either the recipient is wrong or vanilla blocks are used. If we see either
@@ -87,7 +90,9 @@ Process finished with exit code 0
 The main take-away I found here is that vanilla blocks do represent a real performance hit.
 
 ### Vanilla blocks: RP vs nonRP sanity check
-![image](./results/vanilla_rp_vs_nonrp.png)
+| ![image](./results/vanilla_rp_vs_nonrp.png) | ![image](./results/vanilla_rp_vs_nonrp_loglog.png) |
+|:-------------------------------------------:|:--------------------------------------------------:|
+
 
 The plot above shows a survival function for bids on RP vanilla blocks vs non-RP vanilla blocks.
 Ideally we'd expect the same curves to be followed (and they are). If they were different, we'd have
