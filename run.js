@@ -2,8 +2,7 @@ import 'dotenv/config'
 import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { readFileSync, readdirSync, createWriteStream } from 'node:fs'
-import { gunzipSync } from 'node:zlib'
+import { createWriteStream } from 'node:fs'
 import { open } from 'lmdb'
 
 const relayApiUrls = new Map()
