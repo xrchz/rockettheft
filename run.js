@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
 import { program } from 'commander'
 import { readFileSync, readdirSync, createWriteStream } from 'node:fs'
@@ -33,7 +34,8 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .requiredOption('-s, --slot <num>', 'First slot to process')
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
        .option('-n, --no-output', 'Do not produce output csv file')
-       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 response before retrying', 5)
+       .option('-p, --proxy', 'Use proxy server')
+       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 response before retrying', 8)
 
 program.parse()
 const options = program.opts()
@@ -41,6 +43,11 @@ const options = program.opts()
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 const delayms = parseInt(options.delay) * 1000
+
+const proxy = options.proxy && new ProxyAgent({
+  uri: process.env.PROXY_URL,
+  token: `Basic ${Buffer.from(process.env.PROXY_CREDS).toString('base64')}`
+})
 
 async function fetchRelayApi(relayApiUrl, path, params) {
   const url = new URL(path.concat('?', params.toString()), relayApiUrl)
@@ -50,8 +57,9 @@ async function fetchRelayApi(relayApiUrl, path, params) {
     credentials: 'include',
     headers: {Authorization: `Basic ${Buffer.from(username.concat(':')).toString('base64')}`}
   }
+  if (proxy) options.dispatcher = proxy
   let response = await fetch(url, options)
-  while (response.status === 429)
+  while (response.status === 429 || response.status === 502)
     response = await (new Promise(resolve =>
       setTimeout(resolve, delayms))).then(
         () => fetch(url, options))
