@@ -33,7 +33,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .requiredOption('-s, --slot <num>', 'First slot to process')
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
        .option('-n, --no-output', 'Do not produce output csv file')
-       .option('-p, --proxy', 'Use proxy server')
+       .option('-p, --proxy <id>', 'Use proxy server')
        .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 response before retrying', 8)
 
 program.parse()
@@ -43,9 +43,10 @@ const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL |
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 const delayms = parseInt(options.delay) * 1000
 
+const proxyid = `PROXY${options.proxy}`
 const proxy = options.proxy && new ProxyAgent({
-  uri: process.env.PROXY_URL,
-  token: `Basic ${Buffer.from(process.env.PROXY_CREDS).toString('base64')}`
+  uri: process.env[`${proxyid}_URL`],
+  token: `Basic ${Buffer.from(process.env[proxyid.concat('_CREDS')]).toString('base64')}`
 })
 
 async function fetchRelayApi(relayApiUrl, path, params) {
