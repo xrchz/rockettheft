@@ -58,10 +58,12 @@ async function fetchRelayApi(relayApiUrl, path, params) {
   }
   if (proxy) options.dispatcher = proxy
   let response = await fetch(url, options)
-  while (response.status === 429 || response.status === 502)
+  while (response.status === 429 || response.status === 502) {
+    console.warn(`${timestamp()}: Repeating ${url} with ${delayms}ms delay after ${response.status}`)
     response = await (new Promise(resolve =>
       setTimeout(resolve, delayms))).then(
         () => fetch(url, options))
+  }
   return response
 }
 
