@@ -77,6 +77,12 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
     console.warn(`response text: ${await response.text()}`)
   }
   const payloads = response.status === 204 ? [] : await response.json()
+  if (payloads instanceof Array) {
+    while (payloads.length > 1 &&
+           payloads[0].value === payloads[1].value &&
+           payloads[0].proposer_fee_recipient === payloads[1].proposer_fee_recipient)
+      payloads.shift()
+  }
   if (!(payloads instanceof Array && payloads.length <= 1)) {
     console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
     return {}
