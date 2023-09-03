@@ -96,7 +96,7 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
     payloads.pop()
   }
   if (!(payloads instanceof Array && payloads.length <= 1)) {
-    console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
+    console.warn(`Unexpected result for ${slotNumber} payload from ${relayName}: ${JSON.stringify(payloads)}`)
     return {}
   }
   return payloads.length && payloads[0]
