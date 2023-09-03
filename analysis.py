@@ -90,16 +90,21 @@ def rethdict2apy(d):
 
 def fix_bloxroute_missing_bids(df):
     ct = 0
-    for ind, row in df.iterrows():
+    for ind, row in df.iterrows():  # TODO speed up by working on df instead of rows
         missing_bid = np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
         missing_winning_bid = (~np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
                                and row['max_bid'] < row['mev_reward'])
         if missing_bid or missing_winning_bid:
             try:
-                assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated')
+                assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated',
+                                                   'bloXroute Max Profit;bloXroute Regulated')
             except AssertionError:
-                print('WARNING: missing bid other than bloxroute')
-                print(row)
+                if missing_bid:
+                    print('WARNING: missing bid other than bloxroute')
+                    print(row)
+                if missing_winning_bid:
+                    pct = 100 * row["max_bid"] / row["mev_reward"]
+                    print(f'{"INFO" if pct > 90 else "WARNING"}: max_bid < mev_reward ({pct:.01f})')
             ct += 1
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
     print(f'Filled in proxy bloxroute max_bids for {ct} slots')
@@ -215,7 +220,8 @@ def vanilla_losses(df, total_weeks, rethdict):
     print(" if first method is much higher, that means we're seeing vanilla block more often than"
           " expected during periods that tend to have high max bids, which is a yellow flag")
 
-    rcpt_nodes = df_rp_vanilla.loc[df_rp_vanilla['correct_fee_recipient'], 'node_address']
+    rcpt_nodes = df_rp_vanilla.loc[~df_rp_vanilla['correct_fee_recipient'].astype('boolean'
+                                                                                  ), 'node_address']
     nonrcpt_nodes = df_rp_vanilla.loc[df_rp_vanilla['correct_fee_recipient'], 'node_address']
     return Counter(rcpt_nodes), Counter(nonrcpt_nodes)
 
@@ -231,25 +237,34 @@ def get_sf(ls):
     return x, y_sf
 
 
-def distribution_plots(df):
-    # note - in these plots, we only assess when there's a max bid; a validator that never
-    # registered with relays (ie, always vanilla) would not show up in them at all
+def distribution_plots(df, use_neighbor_max_bid=False):
+    if use_neighbor_max_bid:
+        df['proxy_max_bid'] = df['max_bid'].rolling(7, center=True, min_periods=1).mean()
+        df['max_bid'].fillna(df['proxy_max_bid'])
+        lbl = 'take2_'
+    else:
+        # note - in these plots, we only assess when there's a max bid; a validator that never
+        # registered with relays (ie, always vanilla) would not show up in them at all
+        lbl = ''
+
     unplotted_df = df[df['max_bid'].isna() & df['is_rocketpool']]
-    unplotted_df.to_csv('./results/unplotted_rp_slots.csv')
+    unplotted_df.to_csv(f'./results/{lbl}unplotted_rp_slots.csv')
 
     df = df[~df['max_bid'].isna()]
     df_rp = df[df['is_rocketpool']]
-    df_rp_vanilla = df_rp[df_rp['is_vanilla']]
-    df_rp_mev = df_rp[~df_rp['is_vanilla'] & df_rp['correct_fee_recipient'] == True]
-    df_rp_bad_recipient = df_rp[df_rp['correct_fee_recipient'] == False]
+    df_rp_mev_goodrcpt = df_rp[~df_rp['is_vanilla'] & (df_rp['correct_fee_recipient'] == True)]
+    df_rp_mev_badrcpt = df_rp[~df_rp['is_vanilla'] & (df_rp['correct_fee_recipient'] == False)]
+    df_rp_vanilla_goodrcpt = df_rp[df_rp['is_vanilla'] & (df_rp['correct_fee_recipient'] == True)]
+    df_rp_vanilla_badrcpt = df_rp[df_rp['is_vanilla'] & (df_rp['correct_fee_recipient'] == False)]
     df_nonrp = df[df['is_rocketpool'] == False]
     df_nonrp_vanilla = df_nonrp[df_nonrp['is_vanilla']]
 
     all_x, all_sf = get_sf(df['max_bid'])
     rp_x, rp_sf = get_sf(df_rp['max_bid'])
-    rp_vanilla_x, rp_vanilla_sf = get_sf(df_rp_vanilla['max_bid'])
-    rp_mev_x, rp_mev_sf = get_sf(df_rp_mev['max_bid'])
-    df_rp_bad_recipient_x, df_rp_bad_recipient_sf = get_sf(df_rp_bad_recipient['max_bid'])
+    rp_mev_goodrcpt_x, rp_mev_goodrctp_sf = get_sf(df_rp_mev_goodrcpt['max_bid'])
+    rp_mev_badrcpt_x, rp_mev_badrcpt_sf = get_sf(df_rp_mev_badrcpt['max_bid'])
+    rp_vanilla_goodrcpt_x, rp_vanilla_goodrcpt_sf = get_sf(df_rp_vanilla_goodrcpt['max_bid'])
+    rp_vanilla_badrcpt_x, rp_vanilla_badrcpt_sf = get_sf(df_rp_vanilla_badrcpt['max_bid'])
     nonrp_vanilla_x, nonrp_vanilla_sf = get_sf(df_nonrp_vanilla['max_bid'])
 
     # 5a/5b Global vs RP -- ideally these look extremely similar
@@ -259,35 +274,61 @@ def distribution_plots(df):
     ax.legend()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
-    fig.savefig('./results/global_vs_rp.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}global_vs_rp.png', bbox_inches='tight')
     ax.set_xscale('log')
-    fig.savefig('./results/global_vs_rp_loglog.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}global_vs_rp_loglog.png', bbox_inches='tight')
 
     # 5c/5d/5e RP correct vs not
-    # - If wrong recipient has higher probability for high bids, that is a very clear sign of theft
-    # - If vanilla has higher probability for high bids, that is a sign of likely theft
     fig, ax = plt.subplots(1)
-    ax.semilogy(rp_mev_x, rp_mev_sf, marker='.', label='RP - correct MEV boost')
-    ax.semilogy(rp_vanilla_x, rp_vanilla_sf, marker='.', label='RP - vanilla')
+    ax.semilogy(rp_mev_goodrcpt_x, rp_mev_goodrctp_sf, marker='.', label='RP - MEV boost')
     ax.semilogy(
-        df_rp_bad_recipient_x, df_rp_bad_recipient_sf, marker='.', label='RP - wrong recipient')
+        rp_mev_badrcpt_x, rp_mev_badrcpt_sf, marker='.', label='RP - MEV boost w/wrong recipient')
     ax.legend()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
-    fig.savefig('./results/rp_subcategories.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_mevbad.png', bbox_inches='tight')
     ax.set_xscale('log')
-    fig.savefig('./results/rp_subcategories_loglog.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_mevbad_loglog.png', bbox_inches='tight')
+
+    fig, ax = plt.subplots(1)
+    ax.semilogy(rp_mev_goodrcpt_x, rp_mev_goodrctp_sf, marker='.', label='RP - MEV boost')
+    ax.semilogy(rp_vanilla_goodrcpt_x, rp_vanilla_goodrcpt_sf, marker='.', label='RP - Vanilla')
+    ax.legend()
+    ax.set_xlabel('Bid (ETH)')
+    ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillagood.png', bbox_inches='tight')
+    ax.set_xscale('log')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillagood_loglog.png', bbox_inches='tight')
+
+    fig, ax = plt.subplots(1)
+    ax.semilogy(rp_mev_goodrcpt_x, rp_mev_goodrctp_sf, marker='.', label='RP - MEV boost')
+    ax.semilogy(
+        rp_vanilla_badrcpt_x,
+        rp_vanilla_badrcpt_sf,
+        marker='.',
+        label='RP - Vanilla w/wrong recipient')
+    ax.legend()
+    ax.set_xlabel('Bid (ETH)')
+    ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillabad.png', bbox_inches='tight')
+    ax.set_xscale('log')
+    fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillabad_loglog.png', bbox_inches='tight')
 
     # yokem suggestion Vanilla Blocks - RP vs non
     fig, ax = plt.subplots(1)
     ax.semilogy(nonrp_vanilla_x, nonrp_vanilla_sf, marker='.', label='Vanilla - nonRP')
-    ax.semilogy(rp_vanilla_x, rp_vanilla_sf, marker='.', label='Vanilla - RP')
+    ax.semilogy(rp_vanilla_goodrcpt_x, rp_vanilla_goodrcpt_sf, marker='.', label='RP - Vanilla')
+    ax.semilogy(
+        rp_vanilla_badrcpt_x,
+        rp_vanilla_badrcpt_sf,
+        marker='.',
+        label='RP - Vanilla w/wrong recipient')
     ax.legend()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
-    fig.savefig('./results/vanilla_rp_vs_nonrp.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}vanilla_rp_vs_nonrp.png', bbox_inches='tight')
     ax.set_xscale('log')
-    fig.savefig('./results/vanilla_rp_vs_nonrp_loglog.png', bbox_inches='tight')
+    fig.savefig(f'./results/{lbl}vanilla_rp_vs_nonrp_loglog.png', bbox_inches='tight')
 
     issue_nodes = unplotted_df['node_address']
     return Counter(issue_nodes)
@@ -299,6 +340,7 @@ def main():
     p = 'rockettheft_slot-0-to-0.csv'
     df_ls = []
     for p in sorted(Path(r'./data').glob('*.csv')):
+        print(p.name)
         if start_slot == 0:
             start_slot = int(p.name.split('-')[1])
         df_ls.append(
@@ -345,11 +387,12 @@ def main():
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), wks, rethdict.copy())
     c_rcpt_van, c_nonrcpt_van = vanilla_losses(df.copy(), wks, rethdict.copy())
     c_unplotted = distribution_plots(df.copy())
+    distribution_plots(df.copy(), use_neighbor_max_bid=True)
 
     print('\n=== RP issue counts by node address ===')
     print(f'🚩Wrong recipient used with MEV-boost: {c_rcpt_mev}')
     print(f'🚩Wrong recipient used with vanilla: {c_rcpt_van}')
-    print(f'⚠ Vanilla blocks: {c_nonrcpt_van}')
+    print(f'⚠ Vanilla blocks (with correct recipient): {c_nonrcpt_van}')
     print(f'⚠ No max bid: {c_unplotted}')  # not registered w/relays? hard to differentiate theft
 
 
