@@ -69,6 +69,13 @@ async function fetchRelayApi(relayApiUrl, path, params) {
 }
 
 async function getPayload(slotNumber, relayName, relayApiUrl) {
+  if ((relayName == 'bloXroute Max Profit' &&
+       [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871].includes(slotNumber)) ||
+      (relayName == 'bloXroute Regulated' &&
+       slotNumber == 6209964)) {
+    console.warn(`Special case: assuming no ${relayName} payload for slot ${slotNumber}`)
+    return 0
+  }
   const path = '/relay/v1/data/bidtraces/proposer_payload_delivered'
   const params = new URLSearchParams({slot: `${slotNumber}`})
   const response = await fetchRelayApi(relayApiUrl, path, params)
@@ -82,6 +89,11 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
            payloads[0].value === payloads[1].value &&
            payloads[0].proposer_fee_recipient === payloads[1].proposer_fee_recipient)
       payloads.shift()
+  }
+  if (relayName == 'bloXroute Max Profit' && slotNumber == 6209957 &&
+      payloads.length == 2 && payloads[0].value == '131339047791255559') {
+    console.warn(`Special case: discarding extra ${relayName} payloads for slot ${slotNumber}`)
+    payloads.pop()
   }
   if (!(payloads instanceof Array && payloads.length <= 1)) {
     console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
