@@ -12,8 +12,7 @@ high level description of what to do, then go into using the tool as it exists o
 
 #### Usage
 
-
-## Getting data for rETH balances
+## Getting per-slot data
 ### File format
 describe what the columns are, blah, blah. Include an example
 `slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees,avg_fee,eth_collat_ratio`
@@ -33,8 +32,11 @@ high level description of what to do, then go into using the tool as it exists o
 
 ### Usage
 - ./data must have:
-  - `balances.jsol`
-  - any number of `rockettheft_slot-###-to-###.csv` csv data files
+  - A 7zip archive with the files used for analysis is provided on the repository; alternatively,
+    please follow the appropriate sections to generate the data 
+  - `balances.jsol` (see [above](#getting-data-for-reth-balances))
+  - any number of `rockettheft_slot-###-to-###.csv` csv data files (see
+    [above](#getting-per-slot-data))
 - Run analysis.py
   - You'll get a whole bunch of output in console, as well as updated plot images and issue csvs
   - ./README.md will use the latest plot images
