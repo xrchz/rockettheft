@@ -6,8 +6,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-# max bid isn't always used (eg, bid gets in too late); 90% is a rough empirical correction
-BID2REWARD = 0.9
+# max bid isn't always used (eg, bid gets in too late)
+#   It's been around 90%, but we get an empirical measure of the mean from the dataset
+BID2REWARD = None
 """
 ===QUESTIONS TO ADDRESS FOR BOUNTY==
 Detail level
@@ -88,8 +89,15 @@ def rethdict2apy(d):
     return 100 * ((d['end_eth'] / d['end_reth']) - (d['start_eth'] / d['start_reth'])) / d['years']
 
 
+def measure_bid2reward(df):
+    """slow and not fast-changing; meant to be called once per new timeframe to set constant"""
+
+    raise RuntimeError('Run was only to get BID2REWARD')
+
+
 def fix_bloxroute_missing_bids(df):
     ct = 0
+    ct_bloxroute_missing = 0
     for ind, row in df.iterrows():  # TODO speed up by working on df instead of rows
         missing_bid = np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
         missing_winning_bid = (~np.isnan(row['max_bid']) and ~np.isnan(row['mev_reward'])
@@ -98,6 +106,7 @@ def fix_bloxroute_missing_bids(df):
             try:
                 assert row['mev_reward_relay'] in ('bloXroute Max Profit', 'bloXroute Regulated',
                                                    'bloXroute Max Profit;bloXroute Regulated')
+                ct_bloxroute_missing += 1
             except AssertionError:
                 if missing_bid:
                     print('WARNING: missing bid other than bloxroute')
@@ -107,7 +116,8 @@ def fix_bloxroute_missing_bids(df):
                     print(f'{"INFO" if pct > 90 else "WARNING"}: max_bid < mev_reward ({pct:.01f})')
             ct += 1
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
-    print(f'Filled in proxy bloxroute max_bids for {ct} slots')
+    print(f'Filled in proxy max_bids for {ct} slots; {ct_bloxroute_missing} were missing'
+          f'bloxroute max_bids')
     return df
 
 
@@ -127,6 +137,8 @@ def recipient_losses_mevboost(df, total_weeks, rethdict):
     print('\n=== MEV-Boost Recipient losses  (see results/recipient_losses.csv) ===')
     print(f'1: {num_wrong} of {num} MEV-boost slots used wrong fee recipient')
     print(f'3a: {sum(wrong_df["lost_eth"]):0.3f} total ETH lost due to wrong fee recipient')
+    temp = [f'{x:0.02f}' for x in wrong_df["lost_eth"].sort_values(ascending=False)[:5]]
+    print(f'  Top 5 losses: {", ".join(temp)}')
     print(f'3b: {sum(wrong_df["lost_eth"])/total_weeks:0.3f} ETH lost per week')
     print(f'3c: APY was {rethdict2apy(rethdict):0.3f}% '
           f'when it should have been {rethdict2apy(nolossd):0.3f}%')
@@ -188,6 +200,11 @@ def vanilla_losses(df, total_weeks, rethdict):
     print(f' {n_bad_rcpt} of {len(df_rp_vanilla)} vanilla slots used wrong fee recipient (see '
           f'results/recipient_losses_vanilla.csv)')
     print(f'~{lost_eth:0.3f} total ETH lost due to wrong fee recipient')
+    temp = [
+        f'{x:0.02f}'
+        for x in df_rp_vanilla["lost_eth_bad_recipient"].sort_values(ascending=False)[:5]
+    ]
+    print(f'  Top 5 losses: {", ".join(temp)}')
     print(f'~{lost_eth/total_weeks:0.3f} ETH lost per week')
     print(f' APY was ~{rethdict2apy(rethdict):0.3f}% '
           f'when it should have been {rethdict2apy(nolossd):0.3f}%')
@@ -218,7 +235,8 @@ def vanilla_losses(df, total_weeks, rethdict):
           f"{df_rp_vanilla['lost_eth_nobid_neighborestimate'].sum():0.3f} "
           f"vs {df_rp_vanilla['lost_eth_nobid_avgestimate'].sum():0.3f}")
     print(" if first method is much higher, that means we're seeing vanilla block more often than"
-          " expected during periods that tend to have high max bids, which is a yellow flag")
+          " expected during periods that tend to have high max bids, which is a yellow flag..."
+          " do note that outliers can move these a lot with respect to each other")
 
     rcpt_nodes = df_rp_vanilla.loc[~df_rp_vanilla['correct_fee_recipient'].astype('boolean'
                                                                                   ), 'node_address']
@@ -238,9 +256,14 @@ def get_sf(ls):
 
 
 def distribution_plots(df, use_neighbor_max_bid=False):
+    print('')
     if use_neighbor_max_bid:
         df['proxy_max_bid'] = df['max_bid'].rolling(7, center=True, min_periods=1).mean()
-        df['max_bid'].fillna(df['proxy_max_bid'])
+        df['max_bid'].fillna(df['proxy_max_bid'], inplace=True)
+        # use mean of all max bids if there were no nearby ones
+        print(f'WARNING: {sum(df["max_bid"].isna())} slots had no nearby max_bids;'
+              f'filling with mean max_bid')
+        df['max_bid'].fillna(df['max_bid'].mean(), inplace=True)
         lbl = 'take2_'
     else:
         # note - in these plots, we only assess when there's a max bid; a validator that never
@@ -272,6 +295,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
     ax.semilogy(all_x, all_sf, marker='.', label='All')
     ax.semilogy(rp_x, rp_sf, marker='.', label='RP')
     ax.legend()
+    ax.grid()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig(f'./results/{lbl}global_vs_rp.png', bbox_inches='tight')
@@ -284,6 +308,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
     ax.semilogy(
         rp_mev_badrcpt_x, rp_mev_badrcpt_sf, marker='.', label='RP - MEV boost w/wrong recipient')
     ax.legend()
+    ax.grid()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig(f'./results/{lbl}rp_mevgood_vs_mevbad.png', bbox_inches='tight')
@@ -294,6 +319,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
     ax.semilogy(rp_mev_goodrcpt_x, rp_mev_goodrctp_sf, marker='.', label='RP - MEV boost')
     ax.semilogy(rp_vanilla_goodrcpt_x, rp_vanilla_goodrcpt_sf, marker='.', label='RP - Vanilla')
     ax.legend()
+    ax.grid()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillagood.png', bbox_inches='tight')
@@ -308,6 +334,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
         marker='.',
         label='RP - Vanilla w/wrong recipient')
     ax.legend()
+    ax.grid()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig(f'./results/{lbl}rp_mevgood_vs_vanillabad.png', bbox_inches='tight')
@@ -324,6 +351,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
         marker='.',
         label='RP - Vanilla w/wrong recipient')
     ax.legend()
+    ax.grid()
     ax.set_xlabel('Bid (ETH)')
     ax.set_ylabel('SF (proportion of blocks with at least x axis bid)')
     fig.savefig(f'./results/{lbl}vanilla_rp_vs_nonrp.png', bbox_inches='tight')
@@ -382,6 +410,13 @@ def main():
     df['reth_portion'] = (1 - (df['avg_fee'])) * (1 - (1 / df['eth_collat_ratio']))
     df.set_index('slot', inplace=True)
 
+    # find and set BID2REWARD
+    global BID2REWARD
+    df['temp'] = df['mev_reward'] / df['max_bid']
+    print(f"bid2reward: mean={df['temp'].mean():0.3f} median={df['temp'].median():0.3f}")
+    BID2REWARD = df['temp'].mean()
+    df.drop('temp', axis=1)
+
     df = fix_bloxroute_missing_bids(df.copy())
 
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), wks, rethdict.copy())
@@ -411,6 +446,8 @@ if __name__ == '__main__':
 # TODO check if theres's a period where nimbus bug caused issues that we should exclude
 #      that data; it might be May/June 2023
 # stretch todo -- for specific losses, plot over time
-# stretch todo -- identify NOs that toggle between vanilla an MEV?
+# stretch todo -- identify NOs that toggle between vanilla and MEV?
+# stretch todo -- identify NOs that toggle between vanilla with right and wrong fee recipient
+# stretch todo -- suggested penalties per NO
 
 # slot 7123730 is suspect -- it's a massive loss due to vanilla, and can't tell if there was a theft
