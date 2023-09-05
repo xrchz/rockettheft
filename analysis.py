@@ -382,19 +382,9 @@ def main():
                     'eth_collat_ratio': wei2eth,  # (node capital + user capital) / node capital
                 }))
     df = pd.concat(df_ls)
-
     end_slot = int(p.name.split('-')[3].split('.')[0])
     assert end_slot != 0  # maybe hits if there's no data
-    slots = len(df)
-    wks = (slots * 12) / (60 * 60 * 24 * 7)
-    range_slots = end_slot - start_slot
-    range_wks = (range_slots * 12) / (60 * 60 * 24 * 7)
-    rethdict = get_rethdict(start_slot, end_slot)
-    print(f'Analyzing {wks:0.1f} weeks of data ({slots} slots)')
-    print(f' {100*slots/range_slots:0.1f}% of range; {range_wks:0.1f} weeks ({range_slots} slots)')
-    print('')
 
-    df = df[df['proposer_index'].notna()]  # get rid of slots without a block
     df['is_vanilla'] = df['mev_reward'].isna()  # make a convenience column
     try:
         assert ((sum(df['avg_fee'] > 0.2) + sum(df['avg_fee'] < 0.05)) == 0)  # sanity check
@@ -405,10 +395,27 @@ def main():
             print(over20)
         under5 = df[df['avg_fee'] < 0.05]
         if len(under5):
-            print('ERROR: under 5%')
+            print('ERROR: under 5%; related to incomplete solo migrations;'
+                  'setting is_rocketpool to False')
             print(under5)
+            df.loc[df['avg_fee'] < 0.05, 'is_rocketpool'] = False
     df['reth_portion'] = (1 - (df['avg_fee'])) * (1 - (1 / df['eth_collat_ratio']))
     df.set_index('slot', inplace=True)
+
+    # Slot 5203679 is when the grace period ended
+    penalty_start_slot = 5203679
+    df = df[df.index >= penalty_start_slot]
+    start_slot = max(start_slot, penalty_start_slot)
+
+    # Show total timeframe and get reth performance in that timeframe
+    slots = len(df)
+    wks = (slots * 12) / (60 * 60 * 24 * 7)
+    range_slots = end_slot - start_slot + 1
+    range_wks = (range_slots * 12) / (60 * 60 * 24 * 7)
+    rethdict = get_rethdict(start_slot, end_slot)
+    print(f'Analyzing {wks:0.1f} weeks of data ({slots} slots)')
+    print(f' {100*slots/range_slots:0.1f}% of range; {range_wks:0.1f} weeks ({range_slots} slots)')
+    print('')
 
     # find and set BID2REWARD
     global BID2REWARD
@@ -417,6 +424,7 @@ def main():
     BID2REWARD = df['temp'].mean()
     df.drop('temp', axis=1)
 
+    df = df[df['proposer_index'].notna()]  # get rid of slots without a block
     df = fix_bloxroute_missing_bids(df.copy())
 
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), wks, rethdict.copy())

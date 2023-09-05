@@ -1,23 +1,32 @@
-## Tools for data gathering
-### Dependencies
-- [nodejs & npm](https://nodejs.org/en)
-- [jq](https://jqlang.github.io/jq/)
-- [g[un]zip](https://www.gnu.org/software/gzip/)
-- Access to an Ethereum archive node, providing JSON-RPC for both execution & consensus (beacon) APIs.
-- [Flashbots Boost Relay Data](https://flashbots-boost-relay-public.s3.us-east-2.amazonaws.com/index.html)
+## Getting data for rETH balances
+### File format
+describe what the columns are, that they're in hex, blah, blah. Consider an example
 
-### Installation
-- `npm install` to install the Node.js dependencies.
-- Download the Flashbots Boost relay data `.json.gz` files (for the desired slots to analyse) into the `data` directory.
+### Downloading balances.jsonl
+The file is available at https://github.com/xrchz/rockettrack/blob/main/balances.jsonl
 
-### Usage
-- Run `./submissions-to-bids.sh data/builder-submissions_slot-<fromSlot>-to-<toSlot>.json.gz` for each of the relay data files.
-- See `node run --help` for more options.
-- `node run -s <fromSlot> -t <toSlot>` to create a csv file `data/mevtheft_slot-<fromSlot>-to-<toSlot>.csv` with analysis data.
+### Generating balances.jsonl
+high level description of what to do, then go into using the tool as it exists on rockettrack
+
+#### Dependencies
+
+#### Usage
+
+
+## Getting data for rETH balances
+### File format
+describe what the columns are, blah, blah. Include an example
+`slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees,avg_fee,eth_collat_ratio`
+
+### Generating csvs
+high level description of what to do, then go into using the tool as it exists on rockettrack
+
+#### Dependencies
+
+#### Usage
 
 
 ## Tools for analysis
-
 ### Dependencies
 - python3
 - python libraries: matplotlib, numpy, pandas
