@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import 'dotenv/config'
 import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
