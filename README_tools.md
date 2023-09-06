@@ -53,14 +53,32 @@ The columns have the following meaning:
 - `avg_fee`: The Rocket Pool node's commission fee at this block, as wei out of one ether, e.g. `150000000000000000` representing 15%.
 - `eth_collat_ratio`: The Rocket Pool node's ether collateralisation ratio at this block, which is the node's total (borrowed + bonded) ether compared to its bonded ether, as wei compared to one ether, e.g. `2000000000000000000` representing 1 bonded ETH for every 1 borrowed ETH.
 
-TODO: describe these examples:
+#### Examples
+Here are some examples of lines that may occur in the generated CSV data files.
 ```
 5996918,32224645557269417,Ultra Sound,31859537951006424,Flashbots;Ultra Sound,318053,false,,,,,,
+```
+This line shows a MEV-boosted block for slot `5996918` with a maximum bid (via Ultra Sound relay) of ~0.0322 ETH, and an actual MEV reward of ~0.0319 ETH from both Flashbots and Ultra Sound relays. The proposer (index `318053`) was not a Rocket Pool validator.
+
+```
 5996922,,,,,525922,true,0xB81E87018Ec50d17116310c87b36622807581fa6,false,true,23364365081901709,150000000000000000,2000000000000000000
+```
+This line shows a non-MEV-boosted block (i.e. no bids or payloads from the Rocket-Pool-approved relays) that was proposed by a Rocket Pool validator (index `525922`) belonging to node `0xB81E87018Ec50d17116310c87b36622807581fa6`. The node was not in the smoothing pool and used its own fee recipient correctly, receiving ~0.0234 ETH in priority fees. The node had 15% average commission and 1:1 bonded:borrowed ETH.
+
+```
 6920000,,,,,19572,false,,,,,,
+```
+This line shows that slot `6920000` received no MEV bids or payloads from the Rocket-Pool-approved relays and was proposed by a validator (index `19572`) that was not part of Rocket Pool.
+
+```
 6920021,589544030392734247,Ultra Sound,574345171451568684,Ultra Sound,565715,true,0x3c80c0a64E6e491F390c30ACC7114Bb431dC17aC,true,true,,150000000000000000,2000000000000000000
+```
+This line is similar to the example for slot `5996922` above, except the node was in the smoothing pool.
+
+```
 7125089,,,,,,,,,,,,
 ```
+This line shows that slot 7125089 was missed (no execution block proposed).
 
 ### Generating the CSV files
 Each file's data can be collected using the main `run.js` script, which takes options to specify the desired start and end slot, as well as URLs for the Ethereum consensus and execution RPC nodes.
