@@ -37,9 +37,6 @@ RocketNodeStaking = CLIENT.eth.contract(
 )
 
 if __name__ == '__main__':
-    avg_fee = OldRocketMinipoolManager.functions.getNodeStakingMinipoolCount(
-        '0x2b6fCa9AD7EBd5408dB009f0DF087Ffd934cF98e').call(block_identifier=16836681)
-    print(avg_fee)  # returns 0
 
     # avg_fee = RocketNodeManager.functions.getAverageNodeFee(
     #     '0x2b6fCa9AD7EBd5408dB009f0DF087Ffd934cF98e').call()
@@ -75,42 +72,54 @@ if __name__ == '__main__':
     #         '0xb62ea3938276deaba926411fa5476bf7056033b214659285842cfae570004187f0191a8ba17fcc0b67ffbc9455ea56bb'
     #     ).call(block_identifier=16836681))  # crashes
 
-    num_nodes = RocketNodeManager.functions.getNodeCount().call()
-    num_nodes = 250
-
-    addr_ls = []
-    avg_fee_ls = []
-    avg_fee_manual_ls = []
-    eth_ratio_ls = []
-    user_portion_ls = []
-
-    for offset in range(0, num_nodes, 100):
-        print(offset)
-        node_ls = RocketNodeManager.functions.getNodeAddresses(offset, 100).call()
-        for addr in node_ls:
-            avg_fee = RocketNodeManager.functions.getAverageNodeFee(addr).call() / 1e18
-
-            # num_minis = RocketMinipoolManager.functions.getNodeMinipoolCount(addr).call()
-            # for i in range(num_minis):
-            #     mini_addr = RocketMinipoolManager.functions.getNodeMinipoolAt(addr, i).call()
-            #     details = RocketMinipoolManager.functions.getMinipoolDetails(mini_addr).call()
-            #     print(details)
-            #     raise RuntimeError
-
-            eth_ratio = RocketNodeStaking.functions.getNodeETHCollateralisationRatio(
-                addr).call() / 1e18  # (node capital + user capital) / node capital
-            user_portion = (1 - avg_fee) * (1 - (1 / eth_ratio))
-
-            addr_ls.append(addr)
-            avg_fee_ls.append(avg_fee)
-            # avg_fee_manual_ls(avg_fee_manual)
-            eth_ratio_ls.append(eth_ratio)
-            user_portion_ls.append(user_portion)
-
-    df = pd.DataFrame({
-        'address': addr_ls,
-        'avg_fee': avg_fee_ls,
-        'eth_ratio': eth_ratio_ls,
-        'user_portion': user_portion_ls,
-    })
-    df.to_csv('./data/user_share.csv')
+    # (6443210, 6762499, 6776887, 6779947)
+    addr = '0x21f3e66382bC47D46E9D28331561dBDCDf34ff1B'
+    block = 17579363
+    avg_fee = RocketNodeManager.functions.getAverageNodeFee(addr).call(
+        block_identifier=block) / 1e18
+    print(avg_fee)
+    avg_fee = OldRocketNodeManager.functions.getAverageNodeFee(addr).call(
+        block_identifier=block) / 1e18
+    print(avg_fee)
+    #
+    # raise RuntimeError
+    #
+    # num_nodes = RocketNodeManager.functions.getNodeCount().call()
+    # num_nodes = 8
+    #
+    # addr_ls = []
+    # avg_fee_ls = []
+    # avg_fee_manual_ls = []
+    # eth_ratio_ls = []
+    # user_portion_ls = []
+    #
+    # for offset in range(0, num_nodes, 100):
+    #     print(offset)
+    #     node_ls = RocketNodeManager.functions.getNodeAddresses(offset, 15).call()
+    #     for addr in node_ls:
+    #         avg_fee = RocketNodeManager.functions.getAverageNodeFee(addr).call() / 1e18
+    #
+    #         # num_minis = RocketMinipoolManager.functions.getNodeMinipoolCount(addr).call()
+    #         # for i in range(num_minis):
+    #         #     mini_addr = RocketMinipoolManager.functions.getNodeMinipoolAt(addr, i).call()
+    #         #     details = RocketMinipoolManager.functions.getMinipoolDetails(mini_addr).call()
+    #         #     print(details)
+    #         #     raise RuntimeError
+    #
+    #         eth_ratio = RocketNodeStaking.functions.getNodeETHCollateralisationRatio(
+    #             addr).call() / 1e18  # (node capital + user capital) / node capital
+    #         user_portion = (1 - avg_fee) * (1 - (1 / eth_ratio))
+    #
+    #         addr_ls.append(addr)
+    #         avg_fee_ls.append(avg_fee)
+    #         # avg_fee_manual_ls(avg_fee_manual)
+    #         eth_ratio_ls.append(eth_ratio)
+    #         user_portion_ls.append(user_portion)
+    #
+    # df = pd.DataFrame({
+    #     'address': addr_ls,
+    #     'avg_fee': avg_fee_ls,
+    #     'eth_ratio': eth_ratio_ls,
+    #     'user_portion': user_portion_ls,
+    # })
+    # df.to_csv('./data/user_share.csv')
