@@ -1,3 +1,23 @@
+## Tools for analysis
+### Dependencies
+- python3
+- python libraries: matplotlib, numpy, pandas
+
+### Usage
+- ./data must have:
+  - `balances.jsol`
+  - any number of `rockettheft_slot-###-to-###.csv` csv data files
+  - For convenience: a 7zip archive with the files used for analysis on 2023-09-05 is provided in
+    ./data
+  - To avoid trusting the provided archive and/or for data not included in that archive, please
+    follow the appropriate sections to generate the [rETH balance](#getting-data-for-reth-balances)
+    and [per-slot](#getting-per-slot-data)) data
+- Run analysis.py
+  - You'll get a whole bunch of output in console, as well as updated plot images and issue csvs
+  - ./README.md will use the latest plot images
+  - The issue csvs are there for follow up analysis or action if desired
+
+
 ## Getting data for rETH balances
 
 We store historical protocol prices of Rocket ether (rETH) in JSON lines format for easy access.
@@ -13,7 +33,8 @@ For example, for block `18011520` (`0x0112d580`), the corresponding line is
 The total ETH deposited is `556689831768737674428416` (`0x75e2375c2c8796590b8e`) and the rETH supply is `514580210564560052027392` (`0x6cf772f8e9aa484dfd07`). Thus, the rETH price (per ETH) for this block is `556689831768737674428416` ÷ `514580210564560052027392` = `1.081832958865592601`.
 
 ### Downloading balances.jsonl
-The file is available at https://github.com/xrchz/rockettrack/blob/main/balances.jsonl, which is updated occassionally.
+The file is available at https://github.com/xrchz/rockettrack/blob/main/balances.jsonl, which is updated occasionally.
+This may be used to extend the analysis time period if you trust the source.
 
 ### Generating balances.jsonl
 To generate an up-to-date version of the file yourself, you can run the update balances script in the repository above.
@@ -51,7 +72,8 @@ The columns have the following meaning:
 - `correct_fee_recipient`: Boolean indicating whether the fee recipient for this block (according to either the relay's payload if `mev_reward` is present, or the Beacon chain otherwise) was correct (either the smoothing pool if `in_smoothing_pool` is `true`, or the node's fee recipient otherwise).
 - `priority_fees`: Sum of the priority fees (transaction fees above the base fee) for this block, e.g. `23364365081901709`. This field is missing if `mev_reward` is present.
 - `avg_fee`: The Rocket Pool node's commission fee at this block, as wei out of one ether, e.g. `150000000000000000` representing 15%.
-- `eth_collat_ratio`: The Rocket Pool node's ether collateralisation ratio at this block, which is the node's total (borrowed + bonded) ether compared to its bonded ether, as wei compared to one ether, e.g. `2000000000000000000` representing 1 bonded ETH for every 1 borrowed ETH.
+- `eth_collat_ratio`: The Rocket Pool node's ether collateralisation ratio at this block, which is the node's total (borrowed + bonded) ether compared to its bonded ether, as wei out of one ether, e.g. a node with 16 bonded ETH and 16 borrowed ETH would give `((16000000000000000000 + 16000000000000000000)/16000000000000000000) * 1000000000000000000 =  2000000000000000000`.
+
 
 #### Examples
 Here are some examples of lines that may occur in the generated CSV data files.
@@ -96,21 +118,3 @@ However simultaneous collection is best done from different IP addresses to avoi
 3. (For each desired slot range): Run the data collection script: `./run.js -s <fromSlot> -t <toSlot>`. See `./run.js --help` for more options.
    - To specify custom URLs for the Ethereum nodes use the `--rpc <url>` and `--bn <url>` options.
    - To use an HTTP proxy when querying the relays, specify the `--proxy <prefix>` option and provide environment variables `PROXY<prefix>_URL` and `PROXY<prefix>_CREDS` with the URL and Basic authentication `<username>:<password>` for the proxy respectively. (Environment variables can be listed in, and will be read from, an `.env` file if desired.)
-
-
-## Tools for analysis
-### Dependencies
-- python3
-- python libraries: matplotlib, numpy, pandas
-
-### Usage
-- ./data must have:
-  - A 7zip archive with the files used for analysis is provided on the repository; alternatively,
-    please follow the appropriate sections to generate the data
-  - `balances.jsol` (see [above](#getting-data-for-reth-balances))
-  - any number of `rockettheft_slot-###-to-###.csv` csv data files (see
-    [above](#getting-per-slot-data))
-- Run analysis.py
-  - You'll get a whole bunch of output in console, as well as updated plot images and issue csvs
-  - ./README.md will use the latest plot images
-  - The issue csvs are there for follow up analysis or action if desired
