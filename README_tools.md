@@ -68,10 +68,17 @@ The data for different slot ranges can be collected in parallel, sharing the sam
 However simultaneous collection is best done from different IP addresses to avoid rate-limiting by the relay APIs; the script takes an optional proxy argument to specify an HTTP proxy to facilitate this.
 
 #### Dependencies
-TODO
+- [Node.js](https://nodejs.org/en) 18+
+- Access to an Ethereum execution layer RPC archive node
+- Access to an Ethereum consensus layer RPC archive node
 
 #### Usage
-TODO
+1. Clone the [rockettheft repository](https://github.com/xrchz/rockettheft): `git clone https://github.com/xrchz/rockettheft`.
+2. Install the JavaScript dependencies: `npm install`.
+3. (For each desired slot range): Run the data collection script: `./run.js -s <fromSlot> -t <toSlot>`. See `./run.js --help` for more options.
+   - To specify custom URLs for the Ethereum nodes use the `--rpc <url>` and `--bn <url>` options.
+   - To use an HTTP proxy when querying the relays, specify the `--proxy <prefix>` option and provide environment variables `PROXY<prefix>_URL` and `PROXY<prefix>_CREDS` with the URL and Basic authentication `<username>:<password>` for the proxy respectively. (Environment variables can be listed in, and will be read from, an `.env` file if desired.)
+
 
 ## Tools for analysis
 ### Dependencies
