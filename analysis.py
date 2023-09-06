@@ -197,8 +197,7 @@ def vanilla_losses(df, total_weeks, rethdict):
     n_bad_rcpt = sum(~df_rp_vanilla["lost_eth_bad_recipient"].isna())
 
     print('\n=== Vanilla Recipient losses (see results/vanilla_losses.csv) ===')
-    print(f' {n_bad_rcpt} of {len(df_rp_vanilla)} vanilla slots used wrong fee recipient (see '
-          f'results/recipient_losses_vanilla.csv)')
+    print(f' {n_bad_rcpt} of {len(df_rp_vanilla)} vanilla slots used wrong fee recipient')
     print(f'~{lost_eth:0.3f} total ETH lost due to wrong fee recipient')
     temp = [
         f'{x:0.02f}'
