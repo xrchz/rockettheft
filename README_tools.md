@@ -1,7 +1,7 @@
 ## Tools for analysis
 ### Dependencies
 - python3
-- python libraries: matplotlib, numpy, pandas
+- python libraries: matplotlib, numpy, pandas, requests, tqdm
 
 ### Usage
 - ./data must have:

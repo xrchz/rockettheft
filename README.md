@@ -9,8 +9,6 @@ We analyze 40.7 weeks of data, starting right after the MEV grace period ended a
 (2022-11-24 05:35:39Z UTC); see
 https://discord.com/channels/405159462932971535/405163979141545995/1044108182513012796.
 
-
-
 ### Global vs RP sanity check
 | ![image](./results/global_vs_rp.png)   | ![image](./results/global_vs_rp_loglog.png) |
 |:--------------------------------------:|:-------------------------------------------:|
@@ -48,9 +46,11 @@ such evidence.
     likely due to chance. It's also not "worth" stealing as a penalty should be applied and will
     make this size theft a net loss.
 - Second row: if anything, it looks like vanilla blocks are underrepresented in slots with high max
-  bids. One theory to explain this would be that folks likely to use vanilla blocks don't use many
-  relays, which means they get smaller max-bids on average. Another (imo less likely) theory is that
-  we don't see the lines diverge until we're starting to get sparser, so it may simply be chance.
+  bids. theory is that since we're defining anything beyond RP-approved relays as "vanilla", then
+  non-RP validators (some using other relays) should expect to have higher rewards on average than
+  RP validators using no relay. Another theory to explain this would be that folks likely to use
+  vanilla blocks (because no block is provided on time) don't use many relays, which means they get
+  smaller max-bids on average. It's likely a mix of those effects.
 - Third row: these match as well as plausible.
 
 It's important to recognize a couple of limitations. First, the sample size for large blocks is very
@@ -126,19 +126,19 @@ Sanity checking 2 ways of estimating the unknown loss: 43.371 vs 20.129
  move these a lot with respect to each other
 ```
 
-Some takeaways:
-- 🚩 There are much too many vanilla blocks with wrong recipient - around 14% of vanilla blocks!
-  - These haven't been a huge loss (0.21% performance), but it's not negligible and should be
-    penalized properly
-- Vanilla blocks in general have been a significant loss (0.91% degradation in performance)
-  - Note that ~10.4% of that is a single block
-
 
 ### Conclusions
-- 🚩 There are much too many vanilla blocks with wrong recipient - around 16% of vanilla blocks!
+- 🚩 There are much too many vanilla blocks with wrong recipient - over 14% of vanilla blocks!
   - We should assign penalties
   - We should consider other mitigation (eg, disallow vanilla blocks entirely)
 - We should assign penalties for bad recipient using MEV boost as well
+- Vanilla blocks in general have been a significant loss (0.91% degradation in performance)
+  - Note that ~10.4% of that is a single block. This was a vanilla block without any max bids and a
+    correct fee recipient. We're approximating by:
+    - Taking the mean of the 3 slots before and after, which are 28.02, 8.34, 46.84, 12.88, 45.94,
+      and 37.25 ETH respectively
+    - Finding the rETH share of that (64.5% here)
+    - Adjusting for the priority fees that _were_ paid out
 - Losses are a small, but not totally negligible, decrease in performance
   - MEV bad recipient: 0.00%
   - Vanilla bad recipient: 0.21%
@@ -146,3 +146,16 @@ Some takeaways:
   - This adds up to 1.12%
     - To put that in perspective: as of 2023-09-05, this is equivalent drag to
       5.4k idle ETH (eg, in the deposit pool)
+
+## Notes about the data
+- "Vanilla" in the source csv files means:
+  - "not an RP-allowed relay"
+  - "not bloXroute ethical" (their API has been sunset, so we don't have that info)
+  - Non-RP validators using MEV-boost on non-allowed relays might reasonably outperform RP vanilla
+- To try to improve on "Vanilla" in this document, RP vanilla blocks are checked to see if they
+  had bloXroute ethical rewards according to beaconcha.in. If so, they are simply dropped from the
+  dataset to avoid polluting our set of Vanilla blocks. This _does_ mean that non-RP proposers have
+  an advantage b/c they might use this relay (similar to any non-RP-allowed relay)
+- There is an ambiguous period for ~3 days after a solo migration is initiated depending on whether
+  the validator gets scrubbed. This was simply neglected. Back of the envelope math showed there
+  were ~8 or so likely proposals in these periods
