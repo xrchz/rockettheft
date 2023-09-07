@@ -1,10 +1,14 @@
 from collections import Counter
 import json
 from pathlib import Path
+import pickle
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import requests
+from tqdm import tqdm
 
 # max bid isn't always used (eg, bid gets in too late)
 #   It's been around 90%, but we get an empirical measure of the mean from the dataset
@@ -118,6 +122,42 @@ def fix_bloxroute_missing_bids(df):
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
     print(f'Filled in proxy max_bids for {ct} slots; {ct_bloxroute_missing} were missing'
           f'bloxroute max_bids')
+    return df
+
+
+def remove_bloxroute_ethical(df):
+    # bloxroute ethical blocks are showing up as vanilla b/c their API was sunset so we can't get
+    # historical rewards; using beaconcha.in's API to look for these cases. Since we don't have easy
+    # access to rocket pool minipool details at this stage; we'll remove these blocks from
+    # consideration. This _does_ mean non-RP "vanilla" will be slightly higher because it includes
+    # this relay while RP doesn't
+    # API rate limit is 10 requests per minute -- this is super slow, but that's why we save it
+    pkl_path = Path('./data/remove_bloxroute_ethical.pkl')
+    pklpart_path = Path('./data/remove_bloxroute_ethical.pklpartial')
+    try:
+        with open(pkl_path, 'rb') as f:
+            relay_d = pickle.load(f)
+    except FileNotFoundError:
+        relay_d = {}  # slot to relay lut
+
+    slots = [s for s in df[df['is_vanilla'] & df['is_rocketpool']].index if s not in relay_d.keys()]
+    for slot in tqdm(slots):
+        r = requests.get(f'https://beaconcha.in/api/v1/slot/{slot}')
+        block = r.json()['data']['exec_block_number']
+        r = requests.get(f'https://beaconcha.in/api/v1/execution/block/{block}')
+        dat = r.json()['data'][0]
+        if dat['relay'] is None:
+            relay_d[slot] = None
+        else:
+            relay_d[slot] = dat['relay']['tag']
+        with open(pklpart_path, 'wb') as f:
+            pickle.dump(relay_d, f)
+        time.sleep(12)  # respect API rate limit
+    if pklpart_path.exists():
+        pklpart_path.replace(pkl_path)  # now that we've run; update full pkl
+    print(f'beaconcha.in relay tags for RP vanilla blocks: {Counter(relay_d.values())}')
+
+    # return df.drop([k for k, v in relay_d.items() if ''])
     return df
 
 
@@ -366,7 +406,7 @@ def main():
 
     p = 'rockettheft_slot-0-to-0.csv'
     df_ls = []
-    for p in sorted(Path(r'./data').glob('*.csv')):
+    for p in sorted(Path(r'./data').glob('*.csv'))[-350:]:
         print(p.name)
         if start_slot == 0:
             start_slot = int(p.name.split('-')[1])
@@ -425,6 +465,7 @@ def main():
 
     df = df[df['proposer_index'].notna()]  # get rid of slots without a block
     df = fix_bloxroute_missing_bids(df.copy())
+    df = remove_bloxroute_ethical(df.copy())
 
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), wks, rethdict.copy())
     c_rcpt_van, c_nonrcpt_van = vanilla_losses(df.copy(), wks, rethdict.copy())
