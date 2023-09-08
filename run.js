@@ -143,10 +143,10 @@ async function populateMinipoolsByPubkey(blockTag) {
         'function getMinipoolPubkey(address) view returns (bytes)',
         'function getMinipoolCount() view returns (uint256)',
         'function getMinipoolAt(uint256) view returns (address)'], provider)
-    const getMinipoolAt = rocketMinipoolManager.interface.getFunction('getMinipoolAt(uint256)')
-    const getMinipoolPubkey = rocketMinipoolManager.interface.getFunction('getMinipoolPubkey(address)')
-    const minipoolCount = parseInt(minipoolsByPubkey && minipoolsByPubkey.size)
-    const targetCount = await rocketMinipoolManager.getMinipoolCount({blockTag})
+    const getMinipoolAt = rocketMinipoolManager.interface.getFunction('getMinipoolAt')
+    const getMinipoolPubkey = rocketMinipoolManager.interface.getFunction('getMinipoolPubkey')
+    const minipoolCount = (minipoolsByPubkey || 0) && minipoolsByPubkey.size
+    const targetCount = parseInt(await rocketMinipoolManager.getMinipoolCount({blockTag}))
     if (minipoolCount < targetCount) {
       minipoolsByPubkey = db.get('minipoolsByPubkey') || new Map()
       const missing = Array(targetCount)
@@ -154,7 +154,7 @@ async function populateMinipoolsByPubkey(blockTag) {
       while (index < targetCount) {
         const toAdd = Math.min(targetCount - index, multicallLimit)
         const addressCalls = Array.from(Array(toAdd).keys()).map(i => [
-          rocketMinipoolManager.address,
+          rocketMinipoolManager,
           rocketMinipoolManager.interface.encodeFunctionData(getMinipoolAt, [index + i])
         ])
         const [addressResultsBlock, addressResults] = await multicall.aggregate(addressCalls, {blockTag})
@@ -162,20 +162,20 @@ async function populateMinipoolsByPubkey(blockTag) {
           console.error(`Unexpected multicall result ${addressResultsBlock}, ${addressResults.length} (wanted ${blockTag}, ${addressCalls.lengtH})`)
           process.exit(1)
         }
-        const addresses = addressResults.map(r => rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolAt, r))
-        const pubkeyCalls = addresses.map(r => [
-          rocketMinipoolManager.address,
+        const addresses = addressResults.map(r => rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolAt, r)[0])
+        const pubkeyCalls = addresses.map(address => [
+          rocketMinipoolManager,
           rocketMinipoolManager.interface.encodeFunctionData(
             getMinipoolPubkey, [address])
         ])
         const [pubkeyResultsBlock, pubkeyResults] = await multicall.aggregate(pubkeyCalls, {blockTag})
         if (parseInt(pubkeyResultsBlock) != blockTag || pubkeyCalls.length != pubkeyResults.length) {
-          console.error(`Unexpected multicall result ${pubkeyResultsBlock}, ${pubkeyResults.length} (wanted ${blockTag}, ${pubkeyCalls.lengtH})`)
+          console.error(`Unexpected multicall result ${pubkeyResultsBlock}, ${pubkeyResults.length} (wanted ${blockTag}, ${pubkeyCalls.length})`)
           process.exit(1)
         }
         missing.splice(index, pubkeyResults.length, ...pubkeyResults.map((r, i) => [
           addresses[i],
-          rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolPubkey, r)
+          rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolPubkey, r)[0]
         ]))
         index += toAdd
       }
