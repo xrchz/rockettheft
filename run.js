@@ -36,7 +36,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .option('-n, --no-output', 'Do not produce output csv file')
        .option('-p, --proxy <id>', 'Use proxy server')
        .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 response before retrying', 8)
-       .option('-m, --max-query-range <num>', 'Maximum number of blocks to query at a time when scanning for vacant minipool creation events', 1000)
+       .option('-m, --multicall-limit <num>', 'Maximum number of calls to multicall at a time', 1000)
 
 program.parse()
 const options = program.opts()
@@ -44,13 +44,16 @@ const options = program.opts()
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 const delayms = parseInt(options.delay) * 1000
-const maxQueryRange = parseInt(options.maxQueryRange)
+const multicallLimit = parseInt(options.multicallLimit)
 
 const proxyid = `PROXY${options.proxy}`
 const proxy = options.proxy && new ProxyAgent({
   uri: process.env[`${proxyid}_URL`],
   token: `Basic ${Buffer.from(process.env[proxyid.concat('_CREDS')]).toString('base64')}`
 })
+
+const multicall = new ethers.Contract('0xeefBa1e63905eF1D7ACbA5a8513c70307C1cE441',
+  ['function aggregate((address, bytes)[]) view returns (uint256, bytes[])'], provider)
 
 async function fetchRelayApi(relayApiUrl, path, params) {
   const url = new URL(path.concat('?', params.toString()), relayApiUrl)
@@ -129,70 +132,75 @@ const getRocketAddress = (name, blockTag) => rocketStorage['getAddress(bytes32)'
 const atlasVersion = 4
 const atlasDeployBlock = 17069898
 
-let vacantMinipoolsByPubkey
-let vacantMinipoolsLastBlock = atlasDeployBlock - 1
-const topics = [ethers.id('MinipoolVacancyPrepared(uint256,uint256,uint256)')]
-const vacantMinipoolInterface = new ethers.Interface(
-  ['function createVacantMinipool(uint256 _bondAmount,uint256 _minimumNodeFee,bytes _validatorPubkey,uint256 _salt,address _expectedMinipoolAddress,uint256 _currentBalance)',
-   'function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures)'])
+let minipoolsLastBlock = 0
+let minipoolsByPubkey
 
-async function populateVacantMinipools(blockNumber) {
-  if (vacantMinipoolsLastBlock < blockNumber) {
-    if (!vacantMinipoolsByPubkey) {
-      ({vacantMinipoolsByPubkey, vacantMinipoolsLastBlock} = db.get('vacant') || {})
-      if (!vacantMinipoolsByPubkey) {
-        vacantMinipoolsByPubkey = new Map()
-        vacantMinipoolsLastBlock = atlasDeployBlock - 1
-      }
-    }
-    while (vacantMinipoolsLastBlock < blockNumber) {
-      const {vacantMinipoolsLastBlock: lastBlock} = db.get('vacant') || {}
-      if (lastBlock && blockNumber <= lastBlock) {
-        ({vacantMinipoolsByPubkey, vacantMinipoolsLastBlock} = db.get('vacant'))
-        break
-      }
-      const fromBlock = vacantMinipoolsLastBlock + 1
-      const toBlock = Math.min(vacantMinipoolsLastBlock + maxQueryRange, blockNumber)
-      const logs = await provider.getLogs({fromBlock, toBlock, topics})
-      for (const log of logs) {
-        const tx = await provider.getTransaction(log.transactionHash)
-        const desc = vacantMinipoolInterface.parseTransaction(tx)
-        if (!desc) {
-          console.error(`Could not parse tx ${JSON.stringify(tx)}`)
+async function populateMinipoolsByPubkey(blockTag) {
+  if (minipoolsLastBlock < blockTag) {
+    const rocketMinipoolManager = new ethers.Contract(
+      await getRocketAddress('rocketMinipoolManager', blockTag),
+      [// 'function getMinipoolByPubkey(bytes) view returns (address)', We can't just use this because it's broken (as of Atlas), in particular for minipools that started vacant
+        'function getMinipoolPubkey(address) view returns (bytes)',
+        'function getMinipoolCount view returns (uint256)',
+        'function getMinipoolAt(uint256) view returns (address)'], provider)
+    const getMinipoolAt = rocketMinipoolManager.interface.getFunction('getMinipoolAt(uint256)')
+    const getMinipoolPubkey = rocketMinipoolManager.interface.getFunction('getMinipoolPubkey(address)')
+    const minipoolCount = parseInt(minipoolsByPubkey && minipoolsByPubkey.size)
+    const targetCount = await rocketMinipoolManager.getMinipoolCount({blockTag})
+    if (minipoolCount < targetCount) {
+      minipoolsByPubkey = db.get('minipoolsByPubkey') || new Map()
+      const missing = Array(targetCount)
+      let index = minipoolsByPubkey.size
+      while (index < targetCount) {
+        const toAdd = Math.min(targetCount - index, multicallLimit)
+        const addressCalls = Array.from(Array(toAdd).keys()).map(i => [
+          rocketMinipoolManager.address,
+          rocketMinipoolManager.interface.encodeFunctionData(getMinipoolAt, [index + i])
+        ])
+        const [addressResultsBlock, addressResults] = await multicall.aggregate(addressCalls, {blockTag})
+        if (parseInt(addressResultsBlock) != blockTag || addressCalls.length != addressResults.length) {
+          console.error(`Unexpected multicall result ${addressResultsBlock}, ${addressResults.length} (wanted ${blockTag}, ${addressCalls.lengtH})`)
           process.exit(1)
         }
-        const result = desc.name == 'createVacantMinipool' ? desc.args :
-          vacantMinipoolInterface.decodeFunctionData(
-            vacantMinipoolInterface.getFunction('createVacantMinipool'),
-            desc.args['data'])
-        const pubkey = result['_validatorPubkey']
-        const expectedMinipoolAddress = result['_expectedMinipoolAddress']
-        if (log.address != expectedMinipoolAddress) {
-          console.error(`Unexpected createVacantMinipool log ${log.address} vs ${expectedMinipoolAddress}`)
+        const addresses = addressResults.map(r => rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolAt, r))
+        const pubkeyCalls = addresses.map(r => [
+          rocketMinipoolManager.address,
+          rocketMinipoolManager.interface.encodeFunctionData(
+            getMinipoolPubkey, [address])
+        ])
+        const [pubkeyResultsBlock, pubkeyResults] = await multicall.aggregate(pubkeyCalls, {blockTag})
+        if (parseInt(pubkeyResultsBlock) != blockTag || pubkeyCalls.length != pubkeyResults.length) {
+          console.error(`Unexpected multicall result ${pubkeyResultsBlock}, ${pubkeyResults.length} (wanted ${blockTag}, ${pubkeyCalls.lengtH})`)
           process.exit(1)
         }
-        const minipoolAddress = log.address
-        vacantMinipoolsByPubkey.set(pubkey, minipoolAddress)
+        missing.splice(index, pubkeyResults.length, ...pubkeyResults.map((r, i) => [
+          addresses[i],
+          rocketMinipoolManager.interface.decodeFunctionResult(getMinipoolPubkey, r)
+        ]))
+        index += toAdd
       }
-      vacantMinipoolsLastBlock = toBlock
+      await db.transaction(() => {
+        const fromCount = (db.get('minipoolsByPubkey') || {size: 0}).size
+        if (fromCount < targetCount) {
+          missing.slice(fromCount).forEach(([address, pubkey]) =>
+            minipoolsByPubkey.set(pubkey, address))
+          db.put('minipoolsByPubkey', minipoolsByPubkey)
+        }
+      })
     }
-    await db.transaction(() => {
-      const {vacantMinipoolsLastBlock: lastBlock} = db.get('vacant') || {}
-      if (!lastBlock || lastBlock < vacantMinipoolsLastBlock)
-        db.put('vacant', {vacantMinipoolsByPubkey, vacantMinipoolsLastBlock})
-    })
+    minipoolsLastBlock = blockTag
   }
 }
 
-async function getVacantMinipoolByPubkey(pubkey, blockNumber) {
-  await populateVacantMinipools(blockNumber)
-  if (vacantMinipoolsByPubkey && vacantMinipoolsByPubkey.has(pubkey))
-    return vacantMinipoolsByPubkey.get(pubkey)
+async function getMinipoolByPubkey(pubkey, blockTag) {
+  await populateMinipoolsByPubkey(blockTag)
+  if (minipoolsByPubkey && minipoolsByPubkey.has(pubkey))
+    return minipoolsByPubkey.get(pubkey)
   else
     return nullAddress
 }
 
-async function getMinipoolAddress(index, blockTag) {
+async function getPubkey(index) {
   const path = `/eth/v1/beacon/states/finalized/validators/${index}`
   const url = new URL(path, beaconRpcUrl)
   const response = await fetch(url)
@@ -201,18 +209,18 @@ async function getMinipoolAddress(index, blockTag) {
     console.warn(`response text: ${await response.text()}`)
   }
   const json = await response.json()
-  const rocketMinipoolManager = new ethers.Contract(
-    await getRocketAddress('rocketMinipoolManager', blockTag),
-    ['function getMinipoolByPubkey(bytes) view returns (address)'], provider)
-  let address = await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
-  if (address == nullAddress)
-    address = await getVacantMinipoolByPubkey(json.data.validator.pubkey, blockTag)
-  return address
+  return json.data.validator.pubkey
 }
 
 const stakingStatus = 2
 const oneEther = ethers.parseEther('1')
 const launchBalance = ethers.parseEther('32')
+
+function isMinipoolStaking(minipoolAddress, blockTag) {
+  const minipool = new ethers.Contract(minipoolAddress,
+    ['function getStatus() view returns (uint8)'], provider)
+  return minipool.getStatus({blockTag}).then(s => s == stakingStatus)
+}
 
 async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   const key = `${blockTag}/${nodeAddress}/avgFee`
@@ -231,6 +239,7 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   const minipoolCount = await rocketMinipoolManager.getNodeMinipoolCount(nodeAddress, {blockTag})
   let depositWeightTotal = 0n
   const feesByWeight = new Map()
+  // TODO: use multicall
   for (const i of Array(parseInt(minipoolCount)).fill().keys()) {
     const minipoolAddress = await rocketMinipoolManager.getNodeMinipoolAt(nodeAddress, i, {blockTag})
     const minipool = new ethers.Contract(minipoolAddress,
@@ -295,11 +304,11 @@ async function getEthCollatRatio(nodeAddress, blockTag) {
 keys to cache:
 <slot>/<relay>/maxBid (string; null if no bids from this relay)
 <slot>/<relay>/proposed {mevReward, feeRecipient} (null if a bid from this relay was not proposed)
-<slot> {blockNumber, proposerIndex, feeRecipient, minipoolAddress (nullAddress if not rocketpool)} (null if this slot was missed)
+<slot> {blockNumber, proposerIndex, proposerPubkey, feeRecipient} (null if this slot was missed)
 <blockNumber>/<nodeAddress>/avgFee (string or missing)
 <blockNumber>/<nodeAddress>/ethCollatRatio (string or missing)
 <blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
-vacant {vacantMinipoolsLastBlock, vacantMinipoolsByPubkey} (map from pubkeys to addresses of minipools that were created vacant, lastBlock is the block this map is uptodate for)
+minipoolsByPubkey (map from pubkeys to addresses of minipools)
 */
 
 async function getPriorityFees(blockNumber) {
@@ -364,8 +373,21 @@ async function populateCache(slotNumber) {
     const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
     const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
     const proposerIndex = json.data.message.proposer_index
-    const minipoolAddress = await getMinipoolAddress(proposerIndex, blockNumber)
-    await db.put(`${slotNumber}`, {blockNumber, proposerIndex, feeRecipient, minipoolAddress})
+    const proposerPubkey = await getPubkey(proposerIndex)
+    await db.put(`${slotNumber}`, {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
+  }
+  // TODO: can remove once database is updated
+  const check = db.get(`${slotNumber}`)
+  if (check && check.blockNumber && (check.minipoolAddress || !check.proposerPubkey)) {
+    if (!check.proposerPubkey) {
+      console.log(`Filling in missing proposerPubkey for ${slotNumber}`)
+      check.proposerPubkey = await getPubkey(check.proposerIndex)
+    }
+    if (check.minipoolAddress) {
+      console.log(`Deleting minipoolAddress ${check.minipoolAddress} for ${slotNumber}`)
+      delete check.minipoolAddress
+    }
+    await db.put(`${slotNumber}`, check)
   }
 }
 
@@ -376,6 +398,7 @@ const timestamp = () => Intl.DateTimeFormat('en-GB',
 const firstSlot = parseInt(options.slot)
 const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
 if (lastSlot < firstSlot) throw new Error(`invalid slot range: ${firstSlot}-${lastSlot}`)
+let slotNumber = firstSlot
 
 const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
 const outputFile = options.output ? createWriteStream(fileName) : null
@@ -388,13 +411,12 @@ await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
 await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,')
 await write('priority_fees,avg_fee,eth_collat_ratio\n')
 
-let slotNumber = firstSlot
 while (slotNumber <= lastSlot) {
   console.log(`${timestamp()}: Ensuring cache for ${slotNumber}`)
   await populateCache(slotNumber)
   await write(`${slotNumber},`)
   console.log(timestamp())
-  const {blockNumber, proposerIndex, feeRecipient, minipoolAddress} = db.get(`${slotNumber}`) || {}
+  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get(`${slotNumber}`) || {}
   if (typeof blockNumber == 'undefined') {
     console.log(`Slot ${slotNumber}: Execution block missing`)
     await write(',,,,,,,,,,,\n')
@@ -428,7 +450,8 @@ while (slotNumber <= lastSlot) {
   await write(`${mevReward},${mevRewardRelays.join(';')},`)
   console.log(`Slot ${slotNumber}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
     mevRewardRelay ? mevRewardRelay.concat(' via ', mevFeeRecipient) : '(none)'}`)
-  const isRocketpool = minipoolAddress != nullAddress
+  const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
+  const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
   await write(`${proposerIndex},${isRocketpool},`)
   console.log(`Slot ${slotNumber}: Proposer index ${proposerIndex} (${isRocketpool ? 'RP' : 'not RP'})`)
   if (isRocketpool) {
