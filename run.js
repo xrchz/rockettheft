@@ -36,6 +36,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .option('-n, --no-output', 'Do not produce output csv file')
        .option('-p, --proxy <id>', 'Use proxy server')
        .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 response before retrying', 8)
+       .option('-m, --max-query-range <num>', 'Maximum number of blocks to query at a time when scanning for vacant minipool creation events', 1000)
 
 program.parse()
 const options = program.opts()
@@ -43,6 +44,7 @@ const options = program.opts()
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 const delayms = parseInt(options.delay) * 1000
+const maxQueryRange = parseInt(options.maxQueryRange)
 
 const proxyid = `PROXY${options.proxy}`
 const proxy = options.proxy && new ProxyAgent({
@@ -124,6 +126,72 @@ const rocketStorage = new ethers.Contract(rocketStorageAddress,
   ['function getAddress(bytes32) view returns (address)'], provider)
 const getRocketAddress = (name, blockTag) => rocketStorage['getAddress(bytes32)'](ethers.id(`contract.address${name}`), {blockTag})
 
+const atlasVersion = 4
+const atlasDeployBlock = 17069898
+
+let vacantMinipoolsByPubkey
+let vacantMinipoolsLastBlock = atlasDeployBlock - 1
+const topics = [ethers.id('MinipoolVacancyPrepared(uint256,uint256,uint256)')]
+const vacantMinipoolInterface = new ethers.Interface(
+  ['function createVacantMinipool(uint256 _bondAmount,uint256 _minimumNodeFee,bytes _validatorPubkey,uint256 _salt,address _expectedMinipoolAddress,uint256 _currentBalance)',
+   'function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures)'])
+
+async function populateVacantMinipools(blockNumber) {
+  if (vacantMinipoolsLastBlock < blockNumber) {
+    if (!vacantMinipoolsByPubkey) {
+      ({vacantMinipoolsByPubkey, vacantMinipoolsLastBlock} = db.get('vacant') || {})
+      if (!vacantMinipoolsByPubkey) {
+        vacantMinipoolsByPubkey = new Map()
+        vacantMinipoolsLastBlock = atlasDeployBlock - 1
+      }
+    }
+    while (vacantMinipoolsLastBlock < blockNumber) {
+      const {vacantMinipoolsLastBlock: lastBlock} = db.get('vacant') || {}
+      if (lastBlock && blockNumber <= lastBlock) {
+        ({vacantMinipoolsByPubkey, vacantMinipoolsLastBlock} = db.get('vacant'))
+        break
+      }
+      const fromBlock = vacantMinipoolsLastBlock + 1
+      const toBlock = Math.min(vacantMinipoolsLastBlock + maxQueryRange, blockNumber)
+      const logs = await provider.getLogs({fromBlock, toBlock, topics})
+      for (const log of logs) {
+        const tx = await provider.getTransaction(log.transactionHash)
+        const desc = vacantMinipoolInterface.parseTransaction(tx)
+        if (!desc) {
+          console.error(`Could not parse tx ${JSON.stringify(tx)}`)
+          process.exit(1)
+        }
+        const result = desc.name == 'createVacantMinipool' ? desc.args :
+          vacantMinipoolInterface.decodeFunctionData(
+            vacantMinipoolInterface.getFunction('createVacantMinipool'),
+            desc.args['data'])
+        const pubkey = result['_validatorPubkey']
+        const expectedMinipoolAddress = result['_expectedMinipoolAddress']
+        if (log.address != expectedMinipoolAddress) {
+          console.error(`Unexpected createVacantMinipool log ${log.address} vs ${expectedMinipoolAddress}`)
+          process.exit(1)
+        }
+        const minipoolAddress = log.address
+        vacantMinipoolsByPubkey.set(pubkey, minipoolAddress)
+      }
+      vacantMinipoolsLastBlock = toBlock
+    }
+    await db.transaction(() => {
+      const {vacantMinipoolsLastBlock: lastBlock} = db.get('vacant') || {}
+      if (!lastBlock || lastBlock < vacantMinipoolsLastBlock)
+        db.put('vacant', {vacantMinipoolsByPubkey, vacantMinipoolsLastBlock})
+    })
+  }
+}
+
+async function getVacantMinipoolByPubkey(pubkey, blockNumber) {
+  await populateVacantMinipools(blockNumber)
+  if (vacantMinipoolsByPubkey && vacantMinipoolsByPubkey.has(pubkey))
+    return vacantMinipoolsByPubkey.get(pubkey)
+  else
+    return nullAddress
+}
+
 async function getMinipoolAddress(index, blockTag) {
   const path = `/eth/v1/beacon/states/finalized/validators/${index}`
   const url = new URL(path, beaconRpcUrl)
@@ -136,7 +204,10 @@ async function getMinipoolAddress(index, blockTag) {
   const rocketMinipoolManager = new ethers.Contract(
     await getRocketAddress('rocketMinipoolManager', blockTag),
     ['function getMinipoolByPubkey(bytes) view returns (address)'], provider)
-  return await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
+  let address = await rocketMinipoolManager.getMinipoolByPubkey(json.data.validator.pubkey, {blockTag})
+  if (address == nullAddress)
+    address = await getVacantMinipoolByPubkey(json.data.validator.pubkey, blockTag)
+  return address
 }
 
 const stakingStatus = 2
@@ -204,8 +275,6 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
   return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
 }
 
-const atlasVersion = 4
-
 async function getEthCollatRatio(nodeAddress, blockTag) {
   const key = `${blockTag}/${nodeAddress}/ethCollatRatio`
   const cached = db.get(key)
@@ -230,6 +299,7 @@ keys to cache:
 <blockNumber>/<nodeAddress>/avgFee (string or missing)
 <blockNumber>/<nodeAddress>/ethCollatRatio (string or missing)
 <blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
+vacant {vacantMinipoolsLastBlock, vacantMinipoolsByPubkey} (map from pubkeys to addresses of minipools that were created vacant, lastBlock is the block this map is uptodate for)
 */
 
 async function getPriorityFees(blockNumber) {
