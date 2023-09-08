@@ -141,7 +141,7 @@ async function populateMinipoolsByPubkey(blockTag) {
       await getRocketAddress('rocketMinipoolManager', blockTag),
       [// 'function getMinipoolByPubkey(bytes) view returns (address)', We can't just use this because it's broken (as of Atlas), in particular for minipools that started vacant
         'function getMinipoolPubkey(address) view returns (bytes)',
-        'function getMinipoolCount view returns (uint256)',
+        'function getMinipoolCount() view returns (uint256)',
         'function getMinipoolAt(uint256) view returns (address)'], provider)
     const getMinipoolAt = rocketMinipoolManager.interface.getFunction('getMinipoolAt(uint256)')
     const getMinipoolPubkey = rocketMinipoolManager.interface.getFunction('getMinipoolPubkey(address)')
@@ -453,7 +453,7 @@ while (slotNumber <= lastSlot) {
   const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
   const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
   await write(`${proposerIndex},${isRocketpool},`)
-  console.log(`Slot ${slotNumber}: Proposer index ${proposerIndex} (${isRocketpool ? 'RP' : 'not RP'})`)
+  console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(6)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
   if (isRocketpool) {
     const {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee} = await getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockNumber)
     const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
