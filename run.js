@@ -215,11 +215,15 @@ async function getPubkey(index) {
 const stakingStatus = 2
 const oneEther = ethers.parseEther('1')
 const launchBalance = ethers.parseEther('32')
+const emptyStorage = '0x0000000000000000000000000000000000000000000000000000000000000000'
 
 function isMinipoolStaking(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(minipoolAddress,
     ['function getStatus() view returns (uint8)'], provider)
-  return minipool.getStatus({blockTag}).then(s => s == stakingStatus)
+  return provider.getStorage(minipool, 0, blockTag).then(s =>
+    s != emptyStorage &&
+    minipool.getStatus({blockTag}).then(s => s == stakingStatus)
+  )
 }
 
 async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
