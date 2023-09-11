@@ -243,20 +243,48 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   const minipoolCount = await rocketMinipoolManager.getNodeMinipoolCount(nodeAddress, {blockTag})
   let depositWeightTotal = 0n
   const feesByWeight = new Map()
-  // TODO: use multicall
-  for (const i of Array(parseInt(minipoolCount)).fill().keys()) {
-    const minipoolAddress = await rocketMinipoolManager.getNodeMinipoolAt(nodeAddress, i, {blockTag})
-    const minipool = new ethers.Contract(minipoolAddress,
-      ['function getNodeDepositBalance() view returns (uint256)',
-       'function getStatus() view returns (uint8)',
-       'function getNodeFee() view returns (uint256)'], provider)
-    if (await minipool.getStatus({blockTag}).then(s => s != stakingStatus)) continue
-    const nodeDeposit = await minipool.getNodeDepositBalance({blockTag})
-    const nodeFee = await minipool.getNodeFee({blockTag})
-    const depositWeight = launchBalance - nodeDeposit
-    depositWeightTotal += depositWeight
-    if (!feesByWeight.has(depositWeight)) feesByWeight.set(depositWeight, nodeFee)
-    else feesByWeight.set(depositWeight, feesByWeight.get(depositWeight) + nodeFee)
+  const getNodeMinipoolAt = rocketMinipoolManager.interface.getFunction('getNodeMinipoolAt')
+  const minipoolInterface = new ethers.Interface([
+    'function getNodeDepositBalance() view returns (uint256)',
+    'function getStatus() view returns (uint8)',
+    'function getNodeFee() view returns (uint256)'
+  ])
+  const getStatus = minipoolInterface.getFunction('getStatus')
+  const getNodeDepositBalance = minipoolInterface.getFunction('getNodeDepositBalance')
+  const getNodeFee = minipoolInterface.getFunction('getNodeFee')
+  const minipoolIndices = Array.from(Array(parseInt(minipoolCount)).keys())
+  while (minipoolIndices.length) {
+    const indicesToProcess = minipoolIndices.splice(0, multicallLimit)
+    const minipoolAddresses = await multicall
+      .aggregate(
+        indicesToProcess.map(i =>
+          [rocketMinipoolManager, rocketMinipoolManager.interface.encodeFunctionData(getNodeMinipoolAt, [nodeAddress, i])]),
+        {blockTag})
+      .then(([, results]) =>
+        results.map(r => rocketMinipoolManager.interface.decodeFunctionResult(getNodeMinipoolAt, r)[0]))
+    const stakingAddresses = await multicall
+      .aggregate(
+        minipoolAddresses.map(m =>
+          [m, minipoolInterface.encodeFunctionData(getStatus, [])]),
+        {blockTag})
+      .then(([_, statuses]) =>
+        statuses
+        .flatMap((s, i) => minipoolInterface.decodeFunctionResult(getStatus, s)[0]
+                           == stakingStatus ? [minipoolAddresses[i]] : []))
+      .then(result => Array.from(result))
+    const minipoolCalls = stakingAddresses
+      .flatMap(m => [[m, minipoolInterface.encodeFunctionData(getNodeDepositBalance, [])],
+                     [m, minipoolInterface.encodeFunctionData(getNodeFee, [])]])
+    const [, result] = await multicall.aggregate(minipoolCalls, {blockTag})
+    const nodeDepositsAndFees = Array.from(result)
+    while (nodeDepositsAndFees.length) {
+      const nodeDeposit = minipoolInterface.decodeFunctionResult(getNodeDepositBalance, nodeDepositsAndFees.shift())[0]
+      const nodeFee = minipoolInterface.decodeFunctionResult(getNodeFee, nodeDepositsAndFees.shift())[0]
+      const depositWeight = launchBalance - nodeDeposit
+      depositWeightTotal += depositWeight
+      if (!feesByWeight.has(depositWeight)) feesByWeight.set(depositWeight, nodeFee)
+      else feesByWeight.set(depositWeight, feesByWeight.get(depositWeight) + nodeFee)
+    }
   }
   let averageNodeFee = 0n
   for (const [depositWeight, fees] of feesByWeight.entries()) {
