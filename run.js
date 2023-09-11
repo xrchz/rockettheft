@@ -380,19 +380,6 @@ async function populateCache(slotNumber) {
     const proposerPubkey = await getPubkey(proposerIndex)
     await db.put(`${slotNumber}`, {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
   }
-  // TODO: can remove once database is updated
-  const check = db.get(`${slotNumber}`)
-  if (check && check.blockNumber && (check.minipoolAddress || !check.proposerPubkey)) {
-    if (!check.proposerPubkey) {
-      console.log(`Filling in missing proposerPubkey for ${slotNumber}`)
-      check.proposerPubkey = await getPubkey(check.proposerIndex)
-    }
-    if (check.minipoolAddress) {
-      console.log(`Deleting minipoolAddress ${check.minipoolAddress} for ${slotNumber}`)
-      delete check.minipoolAddress
-    }
-    await db.put(`${slotNumber}`, check)
-  }
 }
 
 const timestamp = () => Intl.DateTimeFormat('en-GB',
