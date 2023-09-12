@@ -226,15 +226,7 @@ function isMinipoolStaking(minipoolAddress, blockTag) {
   )
 }
 
-async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
-  const key = `${blockTag}/${nodeAddress}/avgFee`
-  const cached = db.get(key)
-  if (typeof cached != 'undefined') return cached
-  if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag})) {
-    const result = await rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag})
-    await db.put(key, result)
-    return result
-  }
+async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
   const rocketMinipoolManager = new ethers.Contract(
     await getRocketAddress('rocketMinipoolManager', blockTag),
     ['function getNodeMinipoolCount(address) view returns (uint256)',
@@ -291,7 +283,19 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
     const scaledWeight = (depositWeight /* * count */ * oneEther) / depositWeightTotal
     averageNodeFee += (fees * scaledWeight) /* / count */
   }
-  const result = averageNodeFee / oneEther
+  return averageNodeFee / oneEther
+}
+
+async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
+  const key = `${blockTag}/${nodeAddress}/avgFee`
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag})) {
+    const result = await rocketNodeManager.getAverageNodeFee(nodeAddress, {blockTag})
+    await db.put(key, result)
+    return result
+  }
+  const result = await getAverageNodeFeeWorkaround(nodeAddress, blockTag)
   await db.put(key, result)
   return result
 }
