@@ -219,11 +219,24 @@ const emptyStorage = '0x00000000000000000000000000000000000000000000000000000000
 
 function isMinipoolStaking(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(minipoolAddress,
-    ['function getStatus() view returns (uint8)'], provider)
+    ['function getStatus() view returns (uint8)',
+     'function getFinalised() view returns (bool)'], provider)
   return provider.getStorage(minipool, 0, blockTag).then(s =>
     s != emptyStorage &&
-    minipool.getStatus({blockTag}).then(s => s == stakingStatus)
+    minipool.getStatus({blockTag}).then(status =>
+      status == stakingStatus &&
+      minipool.getFinalised({blockTag}).then(finalised =>
+        !finalised
+      )
+    )
   )
+}
+
+function groupBy2(a) {
+  const result = []
+  while (a.length)
+    result.push([a.shift(), a.shift()])
+  return result
 }
 
 async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
@@ -239,9 +252,11 @@ async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
   const minipoolInterface = new ethers.Interface([
     'function getNodeDepositBalance() view returns (uint256)',
     'function getStatus() view returns (uint8)',
+    'function getFinalised() view returns (bool)',
     'function getNodeFee() view returns (uint256)'
   ])
   const getStatus = minipoolInterface.getFunction('getStatus')
+  const getFinalised = minipoolInterface.getFunction('getFinalised')
   const getNodeDepositBalance = minipoolInterface.getFunction('getNodeDepositBalance')
   const getNodeFee = minipoolInterface.getFunction('getNodeFee')
   const minipoolIndices = Array.from(Array(parseInt(minipoolCount)).keys())
@@ -259,13 +274,16 @@ async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
       .then(result => Array.from(result))
     const stakingAddresses = await multicall
       .aggregate(
-        minipoolAddresses.map(m =>
-          [m, minipoolInterface.encodeFunctionData(getStatus, [])]),
+        minipoolAddresses.flatMap(m =>
+          [[m, minipoolInterface.encodeFunctionData(getStatus, [])],
+           [m, minipoolInterface.encodeFunctionData(getFinalised, [])]]),
         {blockTag})
       .then(([_, statuses]) =>
-        Array.from(statuses)
-        .flatMap((s, i) => minipoolInterface.decodeFunctionResult(getStatus, s)[0] ==
-                           stakingStatus ? [minipoolAddresses[i]] : []))
+        groupBy2(Array.from(statuses))
+        .flatMap(([s, f], i) =>
+          minipoolInterface.decodeFunctionResult(getStatus, s)[0] == stakingStatus &&
+          !(minipoolInterface.decodeFunctionResult(getFinalised, f)[0])
+          ? [minipoolAddresses[i]] : []))
       .then(result => Array.from(result))
     const minipoolCalls = stakingAddresses
       .flatMap(m => [[m, minipoolInterface.encodeFunctionData(getNodeDepositBalance, [])],
