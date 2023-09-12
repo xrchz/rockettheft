@@ -250,19 +250,22 @@ async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
     const minipoolAddresses = await multicall
       .aggregate(
         indicesToProcess.map(i =>
-          [rocketMinipoolManager, rocketMinipoolManager.interface.encodeFunctionData(getNodeMinipoolAt, [nodeAddress, i])]),
+          [rocketMinipoolManager,
+           rocketMinipoolManager.interface.encodeFunctionData(getNodeMinipoolAt, [nodeAddress, i])]),
         {blockTag})
       .then(([, results]) =>
-        results.map(r => rocketMinipoolManager.interface.decodeFunctionResult(getNodeMinipoolAt, r)[0]))
+        Array.from(results).map(r =>
+          rocketMinipoolManager.interface.decodeFunctionResult(getNodeMinipoolAt, r)[0]))
+      .then(result => Array.from(result))
     const stakingAddresses = await multicall
       .aggregate(
         minipoolAddresses.map(m =>
           [m, minipoolInterface.encodeFunctionData(getStatus, [])]),
         {blockTag})
       .then(([_, statuses]) =>
-        statuses
-        .flatMap((s, i) => minipoolInterface.decodeFunctionResult(getStatus, s)[0]
-                           == stakingStatus ? [minipoolAddresses[i]] : []))
+        Array.from(statuses)
+        .flatMap((s, i) => minipoolInterface.decodeFunctionResult(getStatus, s)[0] ==
+                           stakingStatus ? [minipoolAddresses[i]] : []))
       .then(result => Array.from(result))
     const minipoolCalls = stakingAddresses
       .flatMap(m => [[m, minipoolInterface.encodeFunctionData(getNodeDepositBalance, [])],
