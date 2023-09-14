@@ -117,7 +117,8 @@ def fix_bloxroute_missing_bids(df):
                     print(row)
                 if missing_winning_bid:
                     pct = 100 * row["max_bid"] / row["mev_reward"]
-                    print(f'{"INFO" if pct > 90 else "WARNING"}: max_bid < mev_reward ({pct:.01f})')
+                    if pct < 90:
+                        print(f'INFO: max_bid << mev_reward ({pct:.01f})')
             ct += 1
             df.loc[ind, 'max_bid'] = row['mev_reward'] / BID2REWARD
     print(f'Filled in proxy max_bids for {ct} slots; {ct_bloxroute_missing} were missing'
@@ -126,12 +127,10 @@ def fix_bloxroute_missing_bids(df):
 
 
 def remove_bloxroute_ethical(df):
-    # bloxroute ethical blocks are showing up as vanilla b/c their API was sunset so we can't get
-    # historical rewards; using beaconcha.in's API to look for these cases. Since we don't have easy
-    # access to rocket pool minipool details at this stage; we'll remove these blocks from
-    # consideration. This _does_ mean non-RP "vanilla" will be slightly higher because it includes
-    # this relay while RP doesn't
     # API rate limit is 10 requests per minute -- this is super slow, but that's why we save it
+    # we remove all vanilla-categorized blocks, not just bloxroute ethical; this is b/c when
+    # multiple relays give the same block, only one is tagged by beaconcha.in. In other words,
+    # we can't tell it _wasn't_ bloxroute ethical
     pkl_path = Path('./data/remove_bloxroute_ethical.pkl')
     pklpart_path = Path('./data/remove_bloxroute_ethical.pklpartial')
     try:
@@ -141,24 +140,38 @@ def remove_bloxroute_ethical(df):
         relay_d = {}  # slot to relay lut
 
     slots = [s for s in df[df['is_vanilla'] & df['is_rocketpool']].index if s not in relay_d.keys()]
+    errors = 0
     for slot in tqdm(slots):
-        r = requests.get(f'https://beaconcha.in/api/v1/slot/{slot}')
-        block = r.json()['data']['exec_block_number']
-        r = requests.get(f'https://beaconcha.in/api/v1/execution/block/{block}')
-        dat = r.json()['data'][0]
-        if dat['relay'] is None:
-            relay_d[slot] = None
-        else:
-            relay_d[slot] = dat['relay']['tag']
+        try:
+            r = requests.get(f'https://beaconcha.in/api/v1/slot/{slot}')
+            block = r.json()['data']['exec_block_number']
+            r = requests.get(f'https://beaconcha.in/api/v1/execution/block/{block}')
+            dat = r.json()['data'][0]
+            if dat['relay'] is None:
+                relay_d[slot] = None
+            else:
+                relay_d[slot] = dat['relay']['tag']
+        except:
+            errors += 1
+            print(r.text)  # 504 is kinda ok here
+            time.sleep(30)
+            if errors > 5:
+                raise
         with open(pklpart_path, 'wb') as f:
             pickle.dump(relay_d, f)
-        time.sleep(12)  # respect API rate limit
+        time.sleep(15)  # respect API rate limit
     if pklpart_path.exists():
         pklpart_path.replace(pkl_path)  # now that we've run; update full pkl
-    print(f'beaconcha.in relay tags for RP vanilla blocks: {Counter(relay_d.values())}')
 
-    # return df.drop([k for k, v in relay_d.items() if ''])
-    return df
+    todrop = sorted([k for k, v in relay_d.items() if v is not None])
+    todrop = [slot for slot in todrop if slot in df.index]
+
+    print('\n=== Removed slots ===')
+    print("These slots are removed b/c we can't tell if they used an allowed relay or not")
+    print("  due to miscategorizing, the fee recipient info in the csvs should be ignored")
+    print(f'beaconcha.in relay tags for RP vanilla slots: {Counter(relay_d.values())}')
+
+    return df.drop(todrop)
 
 
 def recipient_losses_mevboost(df, total_weeks, rethdict):
@@ -300,7 +313,7 @@ def distribution_plots(df, use_neighbor_max_bid=False):
         df['proxy_max_bid'] = df['max_bid'].rolling(7, center=True, min_periods=1).mean()
         df['max_bid'].fillna(df['proxy_max_bid'], inplace=True)
         # use mean of all max bids if there were no nearby ones
-        print(f'WARNING: {sum(df["max_bid"].isna())} slots had no nearby max_bids;'
+        print(f'INFO: {sum(df["max_bid"].isna())} slots had no nearby max_bids;'
               f'filling with mean max_bid')
         df['max_bid'].fillna(df['max_bid'].mean(), inplace=True)
         lbl = 'take2_'
@@ -406,7 +419,7 @@ def main():
 
     p = 'rockettheft_slot-0-to-0.csv'
     df_ls = []
-    for p in sorted(Path(r'./data').glob('*.csv'))[-350:]:
+    for p in sorted(Path(r'./data').glob('*.csv')):
         print(p.name)
         if start_slot == 0:
             start_slot = int(p.name.split('-')[1])
@@ -424,6 +437,11 @@ def main():
     end_slot = int(p.name.split('-')[3].split('.')[0])
     assert end_slot != 0  # maybe hits if there's no data
 
+    # Slot 5203679 is when the grace period ended
+    penalty_start_slot = 5203679
+    df = df[df['slot'] >= penalty_start_slot]
+    start_slot = max(start_slot, penalty_start_slot)
+
     df['is_vanilla'] = df['mev_reward'].isna()  # make a convenience column
     try:
         assert ((sum(df['avg_fee'] > 0.2) + sum(df['avg_fee'] < 0.05)) == 0)  # sanity check
@@ -440,11 +458,6 @@ def main():
             df.loc[df['avg_fee'] < 0.05, 'is_rocketpool'] = False
     df['reth_portion'] = (1 - (df['avg_fee'])) * (1 - (1 / df['eth_collat_ratio']))
     df.set_index('slot', inplace=True)
-
-    # Slot 5203679 is when the grace period ended
-    penalty_start_slot = 5203679
-    df = df[df.index >= penalty_start_slot]
-    start_slot = max(start_slot, penalty_start_slot)
 
     # Show total timeframe and get reth performance in that timeframe
     slots = len(df)
@@ -497,5 +510,3 @@ if __name__ == '__main__':
 # stretch todo -- identify NOs that toggle between vanilla and MEV?
 # stretch todo -- identify NOs that toggle between vanilla with right and wrong fee recipient
 # stretch todo -- suggested penalties per NO
-
-# slot 7123730 is suspect -- it's a massive loss due to vanilla, and can't tell if there was a theft
