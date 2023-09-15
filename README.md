@@ -9,14 +9,14 @@ We analyze 40.7 weeks of data, starting right after the MEV grace period ended a
 (2022-11-24 05:35:39Z UTC); see
 https://discord.com/channels/405159462932971535/405163979141545995/1044108182513012796.
 
-### Global vs RP sanity check
+### Global vs RP consistency check
 | ![image](./results/global_vs_rp.png)   | ![image](./results/global_vs_rp_loglog.png) |
 |:--------------------------------------:|:-------------------------------------------:|
 
-The plot above shows a survival function for bids on all blocks and just RP blocks. This is mostly a
-sanity check looking at if RP is being consistently lucky or unlucky, and we see no evidence that we
-get better or worse bids. The curves move alongside each other well until data becomes too sparse to
-be relied on, which is what we'd expect -- no evidence for different "luck" between RP and non-RP.
+The plot above shows a survival function for bids on all blocks and just RP blocks. This is looking
+at if RP is being consistently lucky or unlucky, and we see no evidence that we get better or worse
+bids. The curves move alongside each other well until data becomes too sparse to be relied on, which
+is what we'd expect -- no evidence for different "luck" between RP and non-RP.
 
 ### Is there systematic theft?
 | ![image](./results/rp_mevgood_vs_mevbad.png)      | ![image](./results/rp_mevgood_vs_mevbad_loglog.png)      |
@@ -46,7 +46,7 @@ such evidence.
     likely due to chance. It's also not "worth" stealing as a penalty should be applied and will
     make this size theft a net loss.
 - Second row: if anything, it looks like vanilla blocks are underrepresented in slots with high max
-  bids. theory is that since we're defining anything beyond RP-approved relays as "vanilla", then
+  bids. A theory is that since we're defining anything beyond RP-approved relays as "vanilla", then
   non-RP validators (some using other relays) should expect to have higher rewards on average than
   RP validators using no relay. Another theory to explain this would be that folks likely to use
   vanilla blocks (because no block is provided on time) don't use many relays, which means they get
@@ -72,12 +72,12 @@ that block.
 
 There's no significant difference.
 
-### Vanilla blocks: RP vs nonRP sanity check
+### Vanilla blocks: RP vs non-RP consistency check
 | ![image](./results/vanilla_rp_vs_nonrp.png) | ![image](./results/vanilla_rp_vs_nonrp_loglog.png) |
 |:-------------------------------------------:|:--------------------------------------------------:|
 
 The plot above shows a survival function for bids on RP vanilla blocks vs non-RP vanilla blocks.
-Ideally we'd expect the same curves to be followed. They mostly are. As previously noted, nonRP
+Ideally we'd expect the same curves to be followed. They mostly are. As previously noted, non-RP
 "vanilla" includes some non-RP-approved relays and is thus likely to be slightly better. Within RP
 vanilla, wrong fee recipient cases _might_ have slightly lower max bids? Hard to say given the low
 amount of data we're looking at for the part that diverges.
@@ -130,7 +130,7 @@ There were 3788 vanilla RP blocks w/correct recipient
 4c: APY was 4.266% when it could have been ~4.304%
  aka, a 0.88% performance hit
 
-Sanity checking 2 ways of estimating the unknown loss: 39.491 vs 19.052
+Comparing 2 ways of estimating the unknown loss: 39.491 vs 19.052
  if first method is much higher, that means we're seeing vanilla block more often than expected
  during periods that tend to have high max bids, which is a yellow flag... do note that outliers can
  move these a lot with respect to each other
