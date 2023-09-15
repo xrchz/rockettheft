@@ -10,6 +10,8 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
+SMOOTHINGPOOLADDR = '0xd4E96eF8eee8678dBFf4d535E033Ed1a4F7605b7'
+
 # max bid isn't always used (eg, bid gets in too late)
 #   It's been around 90%, but we get an empirical measure of the mean from the dataset
 BID2REWARD = None
@@ -135,11 +137,11 @@ def remove_bloxroute_ethical(df):
     pklpart_path = Path('./data/remove_bloxroute_ethical.pklpartial')
     try:
         with open(pkl_path, 'rb') as f:
-            relay_d = pickle.load(f)
+            d = pickle.load(f)
     except FileNotFoundError:
-        relay_d = {}  # slot to relay lut
+        d = {}  # slot to relay lut
 
-    slots = [s for s in df[df['is_vanilla'] & df['is_rocketpool']].index if s not in relay_d.keys()]
+    slots = [s for s in df[df['is_vanilla'] & df['is_rocketpool']].index if s not in d.keys()]
     errors = 0
     for slot in tqdm(slots):
         try:
@@ -148,21 +150,21 @@ def remove_bloxroute_ethical(df):
             r = requests.get(f'https://beaconcha.in/api/v1/execution/block/{block}')
             dat = r.json()['data'][0]
             if dat['relay'] is None:
-                relay_d[slot] = None
+                d[slot] = None
             else:
-                relay_d[slot] = dat['relay']['tag']
-        except:
+                d[slot] = dat
+        except:  # There are occasional errors (eg 504); run more than once to fill in gaps
             errors += 1
-            print(r.text)  # 504 is kinda ok here
             time.sleep(30)
-            if errors > 5:
+            if errors > 10:
                 raise
         with open(pklpart_path, 'wb') as f:
-            pickle.dump(relay_d, f)
-        time.sleep(15)  # respect API rate limit
+            pickle.dump(d, f)
+        time.sleep(11)  # respect API rate limit
     if pklpart_path.exists():
         pklpart_path.replace(pkl_path)  # now that we've run; update full pkl
 
+    relay_d = {k: (v if v is None else v['relay']['tag']) for k, v in d.items()}
     todrop = sorted([k for k, v in relay_d.items() if v is not None])
     todrop = [slot for slot in todrop if slot in df.index]
 
@@ -171,7 +173,23 @@ def remove_bloxroute_ethical(df):
     print("  due to miscategorizing, the fee recipient info in the csvs should be ignored")
     print(f'beaconcha.in relay tags for RP vanilla slots: {Counter(relay_d.values())}')
 
-    return df.drop(todrop)
+    with open('data/node2distributor.json', 'r') as f:
+        lut = json.load(f)
+    df_removed_wrong = df.loc[todrop].copy()
+    lost_eth = 0
+    incorrect_ls = []
+    for slot, row in df_removed_wrong.iterrows():
+        recipient = d[slot]['relay']['producerFeeRecipient'].lower()
+        if row['in_smoothing_pool']:
+            correct_recipient = (recipient == SMOOTHINGPOOLADDR.lower())
+        else:
+            correct_recipient = (recipient == lut[row['node_address']].lower())
+        if not correct_recipient:
+            lost_eth += row['reth_portion'] * d[slot]['blockMevReward'] / 1e18
+            incorrect_ls.append(row['node_address'])
+    print(f'Wrong fee recipient losses in these blocks about to be dropped: {lost_eth:.2f}ETH')
+
+    return df.drop(todrop), Counter(incorrect_ls)
 
 
 def recipient_losses_mevboost(df, total_weeks, rethdict):
@@ -478,7 +496,7 @@ def main():
 
     df = df[df['proposer_index'].notna()]  # get rid of slots without a block
     df = fix_bloxroute_missing_bids(df.copy())
-    df = remove_bloxroute_ethical(df.copy())
+    df, c_rcpt_removed = remove_bloxroute_ethical(df.copy())
 
     c_rcpt_mev = recipient_losses_mevboost(df.copy(), wks, rethdict.copy())
     c_rcpt_van, c_nonrcpt_van = vanilla_losses(df.copy(), wks, rethdict.copy())
@@ -488,6 +506,8 @@ def main():
     print('\n=== RP issue counts by node address ===')
     print(f'🚩Wrong recipient used with MEV-boost: {c_rcpt_mev}')
     print(f'🚩Wrong recipient used with vanilla: {c_rcpt_van}')
+    print(f'🚩Wrong recipient used in removed blocks (we have no mev data, but beaconcha.in does):'
+          f'{c_rcpt_removed}')
     print(f'⚠ Vanilla blocks (with correct recipient): {c_nonrcpt_van}')
     print(f'⚠ No max bid: {c_unplotted}')  # not registered w/relays? hard to differentiate theft
 
@@ -510,3 +530,4 @@ if __name__ == '__main__':
 # stretch todo -- identify NOs that toggle between vanilla and MEV?
 # stretch todo -- identify NOs that toggle between vanilla with right and wrong fee recipient
 # stretch todo -- suggested penalties per NO
+# stretch todo -- analyze data during MEV grace period
