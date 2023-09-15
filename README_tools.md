@@ -7,11 +7,18 @@
 - ./data must have:
   - `balances.jsol`
   - any number of `rockettheft_slot-###-to-###.csv` csv data files
-  - For convenience: a 7zip archive with the files used for analysis on 2023-09-05 is provided in
+  - `node2distributor.json`
+    - Format is a json dictionary with node address as the key and fee distributor for that node as
+      the value
+  - For convenience: a 7zip archive with the files used for analysis on 2023-09-15 is provided in
     ./data
-  - To avoid trusting the provided archive and/or for data not included in that archive, please
-    follow the appropriate sections to generate the [rETH balance](#getting-data-for-reth-balances)
-    and [per-slot](#getting-per-slot-data)) data
+  - To avoid trusting the provided archive and/or for data not included in that archive, please:
+    - See [rETH balance](#getting-data-for-reth-balances) below for `balances.jsol`
+    - See [per-slot](#getting-per-slot-data)) below for `rockettheft_slot-###-to-###.csv` files
+    - Run `get_node2distributor_lut.py` to generate `node2distributor.json`
+  - There is a `remove_bloxroute_ethical.pkl` file in ./data as well. During the run it will be
+    created if not there, used if it is there, and have missing slots filled in if needed. This step
+    is very slow (the better part of a day).
 - Run analysis.py
   - You'll get a whole bunch of output in console, as well as updated plot images and issue csvs
   - ./README.md will use the latest plot images
