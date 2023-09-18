@@ -138,9 +138,14 @@ Comparing 2 ways of estimating the unknown loss: 39.491 vs 19.052
 
 
 ### Conclusions
-- ⚠ There are a significant number of vanilla blocks with wrong recipient; ~4.7% of vanilla blocks!
+- ⚠ There are a significant number of "vanilla" blocks with wrong recipient; ~4.7% of these blocks!
   - We should assign penalties
   - We should consider other mitigation (eg, disallow vanilla blocks entirely)
+  - Some of these have a potentially allowed fee-recipient (eg, send to smoothing pool when not in
+    smoothing pool). We've asked for clearer spec on this.
+  - ~84% of these "wrong recipient" blocks have a payment to the fee recipient (see 💬4 in
+    [feedback_20230917.md](./feedback_20230917.md)); these were most likely using a non-RP-allowed
+    relay, but could also be caused by an RP-allowed relay with missing data.
 - We should assign penalties for bad recipient using MEV boost as well
 - Vanilla blocks in general have been a significant loss (0.91% degradation in performance)
   - Note that ~10.8% of that is a single block. This was a vanilla block without any max bids and a
