@@ -497,15 +497,16 @@ while (slotNumber <= lastSlot) {
   const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
   const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
   await write(`${proposerIndex},${isRocketpool},`)
-  console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(6)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
+  console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
   if (isRocketpool) {
     const {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee} = await getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockNumber)
     const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
+    console.log(`mevFeeRecipient: ${mevFeeRecipient}, feeRecipient: ${feeRecipient}`)
     const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
     const priorityFees = mevReward ? '' : await getPriorityFees(blockNumber)
     const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
     await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees},${avgFee},${ethCollatRatio}\n`)
-    console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient}`)
+    console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient} (${effectiveFeeRecipient} ${hasCorrectFeeRecipient ? '=' : '≠'} ${correctFeeRecipient})`)
     console.log(`Slot ${slotNumber}: Average fee ${ethers.formatEther(avgFee)}, ETH collat ${ethers.formatEther(ethCollatRatio)}`)
     if (priorityFees) console.log(`Slot ${slotNumber}: Priority fees ${ethers.formatEther(priorityFees)} ETH`)
   }
@@ -515,3 +516,4 @@ while (slotNumber <= lastSlot) {
   slotNumber++
 }
 await endOut()
+await db.close()
