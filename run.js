@@ -106,7 +106,7 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
   if ((relayName == 'bloXroute Max Profit' &&
        [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871].includes(slotNumber)) ||
       (relayName == 'bloXroute Regulated' &&
-       slotNumber == 6209964)) {
+       [6209964, 8037005].includes(slotNumber))) {
     console.warn(`Special case: assuming no ${relayName} payload for slot ${slotNumber}`)
     return 0
   }
