@@ -51,6 +51,20 @@ relayApiUrls.set('Aestus',
     startSlot: 0,
     endSlot: Infinity
   })
+relayApiUrls.set('Titan Global',
+  {
+    url: 'https://0x8c4ed5e24fe5c6ae21018437bde147693f68cda427cd1122cf20819c30eda7ed74f72dece09bb313f2a1855595ab677d@global.titanrelay.xyz',
+    startSlot: 9079779,
+    endSlot: Infinity
+  }
+)
+relayApiUrls.set('Titan Regional',
+  {
+    url: 'https://0x8c4ed5e24fe5c6ae21018437bde147693f68cda427cd1122cf20819c30eda7ed74f72dece09bb313f2a1855595ab677d@regional.titanrelay.xyz',
+    startSlot: 9079779,
+    endSlot: Infinity
+  }
+)
 
 const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
 
