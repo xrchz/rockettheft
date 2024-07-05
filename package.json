@@ -9,6 +9,7 @@
     "commander": "11",
     "dotenv": "16",
     "lmdb": "3",
+    "jsdom": "24",
     "undici": "5"
   }
 }
