@@ -8,7 +8,7 @@
     "ethers": "6",
     "commander": "11",
     "dotenv": "16",
-    "lmdb": "2",
+    "lmdb": "3",
     "undici": "5"
   }
 }
