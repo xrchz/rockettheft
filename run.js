@@ -77,7 +77,8 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
        .option('-n, --no-output', 'Do not produce output csv file')
        .option('-p, --proxy <id>', 'Use proxy server')
-       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 response before retrying', 8)
+       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 or 504 response before retrying', 8)
+       .option('-l, --rate-limit <millisecs>', 'Number of milliseconds to pause before fetching from a relay API endpoint', 200)
        .option('-m, --multicall-limit <num>', 'Maximum number of calls to multicall at a time', 1000)
 
 program.parse()
@@ -86,6 +87,7 @@ const options = program.opts()
 const provider = new ethers.JsonRpcProvider(options.rpc || process.env.RPC_URL || 'http://localhost:8545')
 const beaconRpcUrl = options.bn || process.env.BN_URL || 'http://localhost:5052'
 const delayms = parseInt(options.delay) * 1000
+const rateLimitms = parseInt(options.rateLimit)
 const multicallLimit = parseInt(options.multicallLimit)
 
 const proxyid = `PROXY${options.proxy}`
@@ -106,8 +108,10 @@ async function fetchRelayApi(relayApiUrl, path, params) {
     headers: {Authorization: `Basic ${Buffer.from(username.concat(':')).toString('base64')}`}
   }
   if (proxy) options.dispatcher = proxy
-  let response = await fetch(url, options)
-  while (response.status === 429 || response.status === 502) {
+  let response = await (new Promise(resolve =>
+    setTimeout(resolve, rateLimitms)).then(
+      () => fetch(url, options).catch(x => {return {status: 599}})))
+  while (response.status === 429 || response.status === 502 || response.status === 504 || response.status === 599) {
     console.warn(`${timestamp()}: Repeating ${url} with ${delayms}ms delay after ${response.status}`)
     response = await (new Promise(resolve =>
       setTimeout(resolve, delayms))).then(
@@ -131,6 +135,7 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
   const response = await fetchRelayApi(relayApiUrl, path, params)
   if (response.status !== 200 && response.status !== 204) {
     console.warn(`Unexpected response status getting ${slotNumber} payload from ${relayName}: ${response.status}`)
+    console.warn(`URL: ${relayApiUrl} ${path} ${params}`)
     console.warn(`response text: ${await response.text()}`)
   }
   const payloads = response.status === 204 ? [] : await response.json()
@@ -158,6 +163,7 @@ async function getBids(slotNumber, relayName, relayApiUrl) {
   const response = await fetchRelayApi(relayApiUrl, path, params)
   if (response.status !== 200 && response.status !== 204) {
     console.warn(`Unexpected response status getting ${slotNumber} bids from ${relayName}: ${response.status}`)
+    console.warn(`URL: ${relayApiUrl} ${path} ${params}`)
     console.warn(`response text: ${await response.text()}`)
   }
   const payloads = response.status === 204 ? [] : await response.json()
