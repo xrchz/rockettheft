@@ -77,7 +77,7 @@ program.option('-r, --rpc <url>', 'Full node RPC endpoint URL (overrides RPC_URL
        .option('-t, --to-slot <num>', 'Last slot to process (default: --slot)')
        .option('-n, --no-output', 'Do not produce output csv file')
        .option('-p, --proxy <id>', 'Use proxy server')
-       .option('-d, --delay <secs>', 'Number of seconds to wait after a 429 or 502 or 504 response before retrying', 8)
+       .option('-d, --delay <secs>', 'Number of seconds to wait after a 408, 429, 502, or 504 response before retrying', 8)
        .option('-l, --rate-limit <millisecs>', 'Number of milliseconds to pause before fetching from a relay API endpoint', 200)
        .option('-m, --multicall-limit <num>', 'Maximum number of calls to multicall at a time', 1000)
 
@@ -111,7 +111,7 @@ async function fetchRelayApi(relayApiUrl, path, params) {
   let response = await (new Promise(resolve =>
     setTimeout(resolve, rateLimitms)).then(
       () => fetch(url, options).catch(x => {return {status: 599}})))
-  while (response.status === 429 || response.status === 502 || response.status === 504 || response.status === 599) {
+  while (response.status === 408 || response.status === 429 || response.status === 502 || response.status === 504 || response.status === 599) {
     console.warn(`${timestamp()}: Repeating ${url} with ${delayms}ms delay after ${response.status}`)
     response = await (new Promise(resolve =>
       setTimeout(resolve, delayms))).then(
