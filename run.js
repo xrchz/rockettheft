@@ -37,7 +37,7 @@ relayApiUrls.set('Eden Network',
   {
     url: 'https://0xb3ee7afcf27f1f1259ac1787876318c6584ee353097a50ed84f51a1f21a323b3736f271a895c7ce918c038e4265918be@relay.edennetwork.io',
     startSlot: 0,
-    endSlot: Infinity
+    endSlot: 9918523
   })
 relayApiUrls.set('Ultra Sound',
   {
