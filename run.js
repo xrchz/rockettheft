@@ -198,7 +198,7 @@ async function populateMinipoolsByPubkey(blockTag) {
     const minipoolCount = (minipoolsByPubkey || 0) && minipoolsByPubkey.size
     const targetCount = parseInt(await rocketMinipoolManager.getMinipoolCount({blockTag}))
     if (minipoolCount < targetCount) {
-      minipoolsByPubkey = db.get('minipoolsByPubkey') || new Map()
+      minipoolsByPubkey = db.get(['minipoolsByPubkey']) || new Map()
       const missing = Array(targetCount)
       let index = minipoolsByPubkey.size
       while (index < targetCount) {
@@ -230,11 +230,11 @@ async function populateMinipoolsByPubkey(blockTag) {
         index += toAdd
       }
       await db.transaction(() => {
-        const fromCount = (db.get('minipoolsByPubkey') || {size: 0}).size
+        const fromCount = (db.get(['minipoolsByPubkey']) || {size: 0}).size
         if (fromCount < targetCount) {
           missing.slice(fromCount).forEach(([address, pubkey]) =>
             minipoolsByPubkey.set(pubkey, address))
-          db.put('minipoolsByPubkey', minipoolsByPubkey)
+          db.put(['minipoolsByPubkey'], minipoolsByPubkey)
         }
       })
     }
@@ -358,7 +358,7 @@ async function getAverageNodeFeeWorkaround(nodeAddress, blockTag) {
 }
 
 async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
-  const key = `${blockTag}/${nodeAddress}/avgFee`
+  const key = [blockTag.toString(), nodeAddress, 'avgFee']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   if (await rocketNodeManager.getFeeDistributorInitialised(nodeAddress, {blockTag})) {
@@ -392,7 +392,7 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
 }
 
 async function getEthCollatRatio(nodeAddress, blockTag) {
-  const key = `${blockTag}/${nodeAddress}/ethCollatRatio`
+  const key = [blockTag, nodeAddress, 'ethCollatRatio']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   const rocketNodeStaking = new ethers.Contract(
@@ -419,7 +419,7 @@ minipoolsByPubkey (map from pubkeys to addresses of minipools)
 */
 
 async function getPriorityFees(blockNumber) {
-  const key = `${blockNumber}/prioFees`
+  const key = [blockNumber.toString(), 'prioFees']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   const block = await provider.getBlock(blockNumber)
@@ -439,8 +439,8 @@ async function getPriorityFees(blockNumber) {
 async function populateCache(slotNumber) {
   for (const [relayName, {url: relayApiUrl, startSlot, endSlot}] of relayApiUrls.entries()) {
     if (!(startSlot <= slotNumber && slotNumber <= endSlot)) continue
-    const keyPrefix = `${slotNumber}/${relayName}`
-    const maxBidKey = `${keyPrefix}/maxBid`
+    const keyPrefix = [slotNumber.toString(), relayName]
+    const maxBidKey = keyPrefix.concat(['maxBid'])
     if (typeof db.get(maxBidKey) == 'undefined') {
       const bids = await getBids(slotNumber, relayName, relayApiUrl)
       const maxBid = bids.length ?
@@ -448,7 +448,7 @@ async function populateCache(slotNumber) {
         null
       await db.put(maxBidKey, maxBid)
     }
-    const proposedKey = `${keyPrefix}/proposed`
+    const proposedKey = keyPrefix.concat(['proposed'])
     if (typeof db.get(proposedKey) == 'undefined') {
       const payload = await getPayload(slotNumber, relayName, relayApiUrl)
       const result = payload ?
@@ -458,13 +458,13 @@ async function populateCache(slotNumber) {
       await db.put(proposedKey, result)
     }
   }
-  if (typeof db.get(`${slotNumber}`) == 'undefined') {
+  if (typeof db.get([slotNumber.toString()]) == 'undefined') {
     const result = {}
     const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
     const url = new URL(path, beaconRpcUrl)
     const response = await fetch(url)
     if (response.status === 404) {
-      await db.put(`${slotNumber}`, null)
+      await db.put([slotNumber.toString()], null)
       return
     }
     else if (response.status !== 200) {
@@ -475,14 +475,14 @@ async function populateCache(slotNumber) {
     if (!('execution_payload_header' in json.data.message.body &&
           parseInt(json.data.message.body.execution_payload_header.block_number))) {
       console.warn(`${slotNumber} has no associated post-merge block`)
-      await db.put(`${slotNumber}`, null)
+      await db.put([slotNumber.toString()], null)
       return
     }
     const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
     const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
     const proposerIndex = json.data.message.proposer_index
     const proposerPubkey = await getPubkey(proposerIndex)
-    await db.put(`${slotNumber}`, {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
+    await db.put([slotNumber.toString()], {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
   }
 }
 
@@ -511,7 +511,7 @@ while (slotNumber <= lastSlot) {
   await populateCache(slotNumber)
   await write(`${slotNumber},`)
   console.log(timestamp())
-  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get(`${slotNumber}`) || {}
+  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotNumber.toString()]) || {}
   if (typeof blockNumber == 'undefined') {
     console.log(`Slot ${slotNumber}: Execution block missing`)
     await write(',,,,,,,,,,,\n')
@@ -520,7 +520,7 @@ while (slotNumber <= lastSlot) {
   }
   let [maxBid, maxBidRelay] = ['', '']
   for (const relayName of relayApiUrls.keys()) {
-    const relayBid = db.get(`${slotNumber}/${relayName}/maxBid`) || ''
+    const relayBid = db.get([slotNumber.toString(), relayName, 'maxBid']) || ''
     if (BigInt(relayBid) > BigInt(maxBid))
       [maxBid, maxBidRelay] = [relayBid, relayName]
   }
@@ -529,7 +529,7 @@ while (slotNumber <= lastSlot) {
   let [mevReward, mevRewardRelay, mevFeeRecipient] = ['', '', '']
   const mevRewardRelays = []
   for (const relayName of relayApiUrls.keys()) {
-    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get(`${slotNumber}/${relayName}/proposed`) || {}
+    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get([slotNumber.toString(), relayName, 'proposed']) || {}
     if (relayFeeRecipient || relayMevReward) {
       if ((mevReward || mevRewardRelay || mevFeeRecipient) && mevReward != relayMevReward) {
         console.error(`Slot ${slotNumber}: Duplicate MEV reward ${mevRewardRelay} for ${
