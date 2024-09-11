@@ -157,18 +157,18 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
   return payloads.length && payloads[0]
 }
 
-async function getBids(slotNumber, relayName, relayApiUrl) {
+async function getBids(slotKey, relayName, relayApiUrl) {
   const path = '/relay/v1/data/bidtraces/builder_blocks_received'
-  const params = new URLSearchParams({slot: `${slotNumber}`})
+  const params = new URLSearchParams({slot: `${slotKey}`})
   const response = await fetchRelayApi(relayApiUrl, path, params)
   if (response.status !== 200 && response.status !== 204) {
-    console.warn(`Unexpected response status getting ${slotNumber} bids from ${relayName}: ${response.status}`)
+    console.warn(`Unexpected response status getting ${slotKey} bids from ${relayName}: ${response.status}`)
     console.warn(`URL: ${relayApiUrl} ${path} ${params}`)
     console.warn(`response text: ${await response.text()}`)
   }
   const payloads = response.status === 204 ? [] : await response.json()
   if (!(payloads instanceof Array)) {
-    console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
+    console.warn(`Unexpected result for ${slotKey} payload: ${payloads}`)
     return []
   }
   return payloads.map(x => BigInt(x.value))
@@ -449,12 +449,13 @@ async function getLastTxInfo(blockNumber) {
 }
 
 async function populateSlotInfo(slotNumber) {
+  const slotKey = slotNumber.toString()
   for (const [relayName, {url: relayApiUrl, startSlot, endSlot}] of relayApiUrls.entries()) {
     if (!(startSlot <= slotNumber && slotNumber <= endSlot)) continue
-    const keyPrefix = [slotNumber.toString(), relayName]
+    const keyPrefix = [slotKey, relayName]
     const maxBidKey = keyPrefix.concat(['maxBid'])
     if (typeof db.get(maxBidKey) == 'undefined') {
-      const bids = await getBids(slotNumber, relayName, relayApiUrl)
+      const bids = await getBids(slotKey, relayName, relayApiUrl)
       const maxBid = bids.length ?
         bids.reduce((max, bid) => max > bid ? max : bid, 0n).toString() :
         null
@@ -470,31 +471,31 @@ async function populateSlotInfo(slotNumber) {
       await db.put(proposedKey, result)
     }
   }
-  if (typeof db.get([slotNumber.toString()]) == 'undefined') {
+  if (typeof db.get([slotKey]) == 'undefined') {
     const result = {}
-    const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
+    const path = `/eth/v1/beacon/blinded_blocks/${slotKey}`
     const url = new URL(path, beaconRpcUrl)
     const response = await fetch(url)
     if (response.status === 404) {
-      await db.put([slotNumber.toString()], null)
+      await db.put([slotKey], null)
       return
     }
     else if (response.status !== 200) {
-      console.warn(`Unexpected response status getting ${slotNumber} block: ${response.status}`)
+      console.warn(`Unexpected response status getting ${slotKey} block: ${response.status}`)
       console.warn(`response text: ${await response.text()}`)
     }
     const json = await response.json()
     if (!('execution_payload_header' in json.data.message.body &&
           parseInt(json.data.message.body.execution_payload_header.block_number))) {
-      console.warn(`${slotNumber} has no associated post-merge block`)
-      await db.put([slotNumber.toString()], null)
+      console.warn(`${slotKey} has no associated post-merge block`)
+      await db.put([slotKey], null)
       return
     }
     const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
     const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
     const proposerIndex = json.data.message.proposer_index
     const proposerPubkey = await getPubkey(proposerIndex)
-    await db.put([slotNumber.toString()], {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
+    await db.put([slotKey], {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
   }
 }
 
