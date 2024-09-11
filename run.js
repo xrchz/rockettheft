@@ -552,7 +552,7 @@ max_bid,                     # top bid received by RP relays for this slot [this
 max_bid_relay,               # relays that received the top bid [;-separated]
 mev_reward,                  # MEV reward claimed delivered by any RP relay [this and the rest empty if none claimed delivered]
 mev_reward_relay,            # RP relays that claim to have delivered the MEV reward [;-separated]
-relay_fee_recipient,         # Fee recipient according to the RP relay
+relay_fee_recipient,         # Fee recipient according to the RP relay(s)
 # Info we get about relays from Butta
 beaconcha_mev_reward,        # MEV reward claimed delivered by Beaconcha [this and the rest empty if none]
 beaconcha_mev_reward_relay,  # Relays claimed delivered by Beaconcha [;-separated]
@@ -629,34 +629,48 @@ while (slotNumber <= lastSlot) {
     await write(',,,,,')
   }
 
-  let [maxBid, maxBidRelay] = ['', '']
+  const slotKey = slotNumber.toString()
+  let maxBid = ''
+  const maxBidRelays = []
   for (const relayName of relayApiUrls.keys()) {
-    const relayBid = db.get([slotNumber.toString(), relayName, 'maxBid']) || ''
-    if (BigInt(relayBid) > BigInt(maxBid))
-      [maxBid, maxBidRelay] = [relayBid, relayName]
+    const relayBid = db.get([slotKey, relayName, 'maxBid']) || ''
+    if (BigInt(relayBid) > BigInt(maxBid)) {
+      maxBid = relayBid
+      maxBidRelays.splice(0, maxBidRelays.length, relayName)
+    }
+    else if (BigInt(relayBid) === BigInt(maxBid)) {
+      maxBidRelays.push(relayName)
+    }
   }
-  await write(`${maxBid},${maxBidRelay},`)
-  console.log(`Slot ${slotNumber}: Max bid ${ethers.formatEther(maxBid || '0')} ETH from ${maxBidRelay || '(none)'}`)
-  let [mevReward, mevRewardRelay, mevFeeRecipient] = ['', '', '']
+  await write(`${maxBid},${maxBidRelays.join(';')},`)
+  console.log(`Slot ${slotKey}: Max bid ${ethers.formatEther(maxBid || '0')} ETH from ${maxBidRelays.length ? maxBidRelays.join('; ') : '(none)'}`)
+  let [mevReward, mevFeeRecipient] = ['', '']
   const mevRewardRelays = []
   for (const relayName of relayApiUrls.keys()) {
-    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get([slotNumber.toString(), relayName, 'proposed']) || {}
+    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get([slotKey, relayName, 'proposed']) || {}
     if (relayFeeRecipient || relayMevReward) {
-      if ((mevReward || mevRewardRelay || mevFeeRecipient) && mevReward != relayMevReward) {
-        console.error(`Slot ${slotNumber}: Duplicate MEV reward ${mevRewardRelay} for ${
-          ethers.formatEther(mevReward || '0')} vs ${relayName} for ${
-          ethers.formatEther(relayMevReward || '0')}`)
+      if ((mevReward || mevFeeRecipient || mevRewardRelays.length) &&
+          (mevReward != relayMevReward || mevFeeRecipient != relayFeeRecipient)) {
+        console.error(`Slot ${slotKey}: Duplicate MEV reward ${mevRewardRelay} for ${
+          ethers.formatEther(mevReward || '0')} via ${mevFeeRecipient} vs ${relayName} for ${
+          ethers.formatEther(relayMevReward || '0')} via ${relayFeeRecipient}`)
         await endOut()
         process.exit(1)
       }
-      [mevReward, mevRewardRelay, mevFeeRecipient] = [relayMevReward, relayName, relayFeeRecipient]
-      mevRewardRelays.push(mevRewardRelay)
+      else {
+        [mevReward, mevFeeRecipient] = [relayMevReward, relayFeeRecipient]
+      }
+      mevRewardRelays.push(relayName)
     }
   }
-  await write(`${mevReward},${mevRewardRelays.join(';')},`)
-  console.log(`Slot ${slotNumber}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
-    mevRewardRelay ? mevRewardRelay.concat(' via ', mevFeeRecipient) : '(none)'}`)
-  console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
+  await write(`${mevReward},${mevRewardRelays.join(';')},${mevFeeRecipient},`)
+  console.log(`Slot ${slotKey}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
+    mevRewardRelays.length ? mevRewardRelays.join('; ').concat(` via ${mevFeeRecipient}`) : '(none)'}`)
+  console.log(`Slot ${slotKey}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
+
+  // beaconcha
+
+  // mevmonitor
 
   slotNumber++
 }
