@@ -495,6 +495,98 @@ const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
 if (lastSlot < firstSlot) throw new Error(`invalid slot range: ${firstSlot}-${lastSlot}`)
 let slotNumber = firstSlot
 
+/*
+// const blockTag = 15835292
+// const blockTag = 16828429
+const blockTag = 17814442
+// const blockTag = 16037791
+// const blockTag = atlasDeployBlock - 21600
+// const blockTag = atlasDeployBlock + 21600
+const rocketNodeManager = new ethers.Contract(
+  await getRocketAddress('rocketNodeManager', blockTag),
+  ['function getSmoothingPoolRegistrationState(address) view returns (bool)',
+   'function getFeeDistributorInitialised(address) view returns (bool)',
+   'function getAverageNodeFee(address) view returns (uint256)',
+   'function getNodeCount() view returns (uint256)',
+   'function getNodeAt(uint256) view returns (address)'
+  ], provider)
+const nodeCount = await rocketNodeManager.getNodeCount({blockTag})
+for (const index of Array(parseInt(nodeCount)).keys()) {
+  const nodeAddress = await rocketNodeManager.getNodeAt(index, {blockTag})
+  await testGetAverageNodeFee(nodeAddress, blockTag)
+}
+process.exit()
+*/
+
+/*
+Current data columns:
+slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees,avg_fee,eth_collat_ratio
+
+Desired data columns:
+# Basic slot and block info
+slot,                        # slot number
+proposer_index,              # proposer index [this and the rest empty for missed blocks]
+raw_fee_recipient,           # fee recipient specified for the block
+last_tx_recipient,           # target of the last transaction in the block
+last_tx_value,               # amount of ETH sent in the last transaction in the block
+priority_fees,               # total ETH paid as transaction fees above the base fee in the block [only included when is_rocketpool and no max_bid]
+# Basic RP info
+is_rocketpool,               # whether the proposer was a Rocket Pool validator
+node_address,                # Rocket Pool node that owns the proposer's validator [this and the rest empty for non-RP]
+distributor_address,         # Rocket Pool node fee distributor address for the node
+in_smoothing_pool,           # Whether the Rocket Pool node was in the smoothing pool (at this block)
+avg_fee,                     # Rocket Pool average fee for the node (at this block)
+eth_collat_ratio,            # Rocket Pool ETH collateralisation ratio for the node (at this block)
+# Info we queried directly from the RP relays
+max_bid,                     # top bid received by RP relays for this slot [this and the rest empty if no bids]
+max_bid_relay,               # relays that received the top bid [;-separated]
+mev_reward,                  # MEV reward claimed delivered by any RP relay [this and the rest empty if none claimed delivered]
+mev_reward_relay,            # RP relays that claim to have delivered the MEV reward [;-separated]
+relay_fee_recipient,         # Fee recipient according to the RP relay
+# Info we get about relays from Butta
+beaconcha_mev_reward,        # MEV reward claimed delivered by Beaconcha [this and the rest empty if none]
+beaconcha_mev_reward_relay,  # Relays claimed delivered by Beaconcha [;-separated]
+beaconcha_fee_recipient,     # MEV fee recipient according to Beaconcha
+# Info we get about relays from Yokem
+mevmonitor_max_bid,          # top bid received by any relays for this slot [this and the rest empty if no bids]
+mevmonitor_max_bid_relay,    # relays that received the top bid [;-separated]
+mevmonitor_mev_reward,       # MEV reward claimed delivered by any relay according to MevMonitor [this and the rest empty if none]
+mevmonitor_mev_reward_relay, # Relays claiming to deliver according to MevMonitor [;-separated]
+mevmonitor_fee_recipient     # Fee recipient addresses for deliveries above according to MevMonitor [;-separated]
+
+Plan for how to get each item:
+slot,                        # given: just iterate through them
+proposer_index,              # our db: <slot>['proposerIndex']
+raw_fee_recipient,           # our db: <slot>['feeRecipient']
+last_tx_recipient,           # our db: <blockNumber>/lastTx['recipient'] *TO COLLECT: read block txs from JSON-RPC*
+last_tx_value,               # our db: <blockNumber>/lastTx['value'] *TO COLLECT: as above*
+priority_fees,               # our db: <blockNumber>/prioFees
+# Basic RP info
+is_rocketpool,               # fetch from rpc: see isRocketpool definition [TODO: should we cache all these too?]
+node_address,                # fetch from rpc: see getCorrectFeeRecipientAndNodeFee
+distributor_address,         # fetch from rpc: ditto
+in_smoothing_pool,           # fetch from rpc: ditto
+avg_fee,                     # fetch from rpc: ditto
+eth_collat_ratio,            # our db: <blockNumber>/<nodeAddress>/ethCollatRatio
+# Info we queried directly from the RP relays
+max_bid,                     # same as in existing code
+max_bid_relay,               # ditto
+mev_reward,                  # ditto
+mev_reward_relay,            # ditto
+relay_fee_recipient,         # ditto
+# Info we get about relays from Butta *TO COLLECT: fetch beaconcha and use jsdom to scrape?*
+beaconcha_mev_reward,        # our db: beaconcha/<slot>['mevReward']
+beaconcha_mev_reward_relay,  # our db: beaconcha/<slot>['mevRewardRelay']
+beaconcha_fee_recipient,     # our db: beaconcha/<slot>['feeRecipient']
+# Info we get about relays from Yokem *TO COLLECT: fetch from https://beta-data.mevmonitor.org/*
+                             #         read json from filesystem - download and decompress as needed
+mevmonitor_max_bid,          # our db: mevmonitor/<slot>['maxBid']
+mevmonitor_max_bid_relay,    # our db: mevmonitor/<slot>['maxBidRelay']
+mevmonitor_mev_reward,       # our db: mevmonitor/<slot>['mevReward']
+mevmonitor_mev_reward_relay, # our db: mevmonitor/<slot>['mevRewardRelay']
+mevmonitor_fee_recipient     # our db: mevmonitor/<slot>['feeRecipient']
+*/
+
 const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
 const outputFile = options.output ? createWriteStream(fileName) : null
 const write = options.output ? async s => new Promise(
