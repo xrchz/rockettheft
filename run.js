@@ -436,6 +436,18 @@ async function getPriorityFees(blockNumber) {
   return result
 }
 
+async function getLastTxInfo(blockNumber) {
+  const key = [blockNumber.toString(), 'lastTx']
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  const block = await provider.getBlock(blockNumber)
+  const lastTxHash = block.transactions.at(-1)
+  const lastTx = lastTxHash ? await provider.getTransaction(lastTxHash) : {to: '', value: ''}
+  const result = {recipient: lastTx.to, value: lastTx.value.toString()}
+  await db.put(key, result)
+  return result
+}
+
 async function populateSlotInfo(slotNumber) {
   for (const [relayName, {url: relayApiUrl, startSlot, endSlot}] of relayApiUrls.entries()) {
     if (!(startSlot <= slotNumber && slotNumber <= endSlot)) continue
@@ -537,8 +549,8 @@ Desired data columns:
 slot,                        # slot number
 proposer_index,              # proposer index [this and the rest empty for missed blocks]
 raw_fee_recipient,           # fee recipient specified for the block
-last_tx_recipient,           # target of the last transaction in the block
-last_tx_value,               # amount of ETH sent in the last transaction in the block
+last_tx_recipient,           # target of the last transaction in the block [empty if there are no transactions]
+last_tx_value,               # amount of ETH sent in the last transaction in the block [ditto]
 priority_fees,               # total ETH paid as transaction fees above the base fee in the block [only included when is_rocketpool and no max_bid]
 # Basic RP info
 is_rocketpool,               # whether the proposer was a Rocket Pool validator
@@ -603,12 +615,13 @@ while (slotNumber <= lastSlot) {
   console.log(`${timestamp()}: Ensuring cache for ${slotNumber}`)
 
   await populateSlotInfo(slotNumber)
-  await write(`${slotNumber},`)
+  const slotKey = slotNumber.toString()
+  await write(`${slotKey},`)
   console.log(timestamp())
 
-  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotNumber.toString()]) || {}
+  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotKey]) || {}
   if (typeof blockNumber == 'undefined') {
-    console.log(`Slot ${slotNumber}: Execution block missing`)
+    console.log(`Slot ${slotKey}: Execution block missing`)
     await write('\n'.padStart(24, ','))
     slotNumber++
     continue
@@ -629,7 +642,6 @@ while (slotNumber <= lastSlot) {
     await write(',,,,,')
   }
 
-  const slotKey = slotNumber.toString()
   let maxBid = ''
   const maxBidRelays = []
   for (const relayName of relayApiUrls.keys()) {
