@@ -371,7 +371,7 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   return result
 }
 
-async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
+async function getNodeInfo(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(
     minipoolAddress,
     ['function getNodeAddress() view returns (address)'], provider)
@@ -382,13 +382,12 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
      'function getFeeDistributorInitialised(address) view returns (bool)',
      'function getAverageNodeFee(address) view returns (uint256)'], provider)
   const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
-  const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
   const rocketNodeDistributorFactory = new ethers.Contract(
     await getRocketAddress('rocketNodeDistributorFactory', blockTag),
     ['function getProxyAddress(address) view returns (address)'], provider)
-  const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress, {blockTag})
+  const distributorAddress = await rocketNodeDistributorFactory.getProxyAddress(nodeAddress, {blockTag})
   const avgFee = await getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag).then(n => n.toString())
-  return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
+  return {nodeAddress, inSmoothingPool, distributorAddress, avgFee}
 }
 
 async function getEthCollatRatio(nodeAddress, blockTag) {
@@ -415,6 +414,7 @@ keys to cache:
 <blockNumber>/<nodeAddress>/avgFee (string or missing)
 <blockNumber>/<nodeAddress>/ethCollatRatio (string or missing)
 <blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
+<blockNumber>/lastTx {recipient, value}
 minipoolsByPubkey (map from pubkeys to addresses of minipools)
 */
 
@@ -436,7 +436,7 @@ async function getPriorityFees(blockNumber) {
   return result
 }
 
-async function populateCache(slotNumber) {
+async function populateSlotInfo(slotNumber) {
   for (const [relayName, {url: relayApiUrl, startSlot, endSlot}] of relayApiUrls.entries()) {
     if (!(startSlot <= slotNumber && slotNumber <= endSlot)) continue
     const keyPrefix = [slotNumber.toString(), relayName]
@@ -518,10 +518,20 @@ for (const index of Array(parseInt(nodeCount)).keys()) {
 process.exit()
 */
 
-/*
-Current data columns:
-slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees,avg_fee,eth_collat_ratio
+const fileName = `data/rt2_slot-${firstSlot}-to-${lastSlot}.csv`
+const outputFile = options.output ? createWriteStream(fileName) : null
+const write = options.output ? async s => new Promise(
+  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
+) : s => null
+const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
+if (options.output) console.log(`Writing to ${fileName}`)
+await write('slot,proposer_index,raw_fee_recipient,last_tx_recipient,last_tx_value,priority_fees,')
+await write('is_rocketpool,node_address,distributor_address,in_smoothing_pool,avg_fee,eth_collat_ratio,')
+await write('max_bid,max_bid_relay,mev_reward,mev_reward_relay,relay_fee_recipient,')
+await write('beaconcha_mev_reward,beaconcha_mev_reward_relay,beaconcha_fee_recipient,')
+await write('mevmonitor_max_bid,mevmonitor_max_bid_relay,mevmonitor_mev_reward,mevmonitor_mev_reward_relay,mevmonitor_fee_recipient\n')
 
+/*
 Desired data columns:
 # Basic slot and block info
 slot,                        # slot number
@@ -553,7 +563,9 @@ mevmonitor_max_bid_relay,    # relays that received the top bid [;-separated]
 mevmonitor_mev_reward,       # MEV reward claimed delivered by any relay according to MevMonitor [this and the rest empty if none]
 mevmonitor_mev_reward_relay, # Relays claiming to deliver according to MevMonitor [;-separated]
 mevmonitor_fee_recipient     # Fee recipient addresses for deliveries above according to MevMonitor [;-separated]
+*/
 
+/*
 Plan for how to get each item:
 slot,                        # given: just iterate through them
 proposer_index,              # our db: <slot>['proposerIndex']
@@ -587,29 +599,36 @@ mevmonitor_mev_reward_relay, # our db: mevmonitor/<slot>['mevRewardRelay']
 mevmonitor_fee_recipient     # our db: mevmonitor/<slot>['feeRecipient']
 */
 
-const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
-const outputFile = options.output ? createWriteStream(fileName) : null
-const write = options.output ? async s => new Promise(
-  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
-) : s => null
-const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
-if (options.output) console.log(`Writing to ${fileName}`)
-await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
-await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,')
-await write('priority_fees,avg_fee,eth_collat_ratio\n')
-
 while (slotNumber <= lastSlot) {
   console.log(`${timestamp()}: Ensuring cache for ${slotNumber}`)
-  await populateCache(slotNumber)
+
+  await populateSlotInfo(slotNumber)
   await write(`${slotNumber},`)
   console.log(timestamp())
+
   const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotNumber.toString()]) || {}
   if (typeof blockNumber == 'undefined') {
     console.log(`Slot ${slotNumber}: Execution block missing`)
-    await write(',,,,,,,,,,,\n')
+    await write('\n'.padStart(24, ','))
     slotNumber++
     continue
   }
+  const {recipient: lastTxRecipient, value: lastTxValue} = await getLastTxInfo(blockNumber)
+  const priorityFees = await getPriorityFees(blockNumber)
+  await write(`${proposerIndex},${feeRecipient},${lastTxRecipient},${lastTxValue},${priorityFees},`)
+
+  const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
+  const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
+  await write(`${isRocketpool},`)
+  if (isRocketpool) {
+    const {nodeAddress, inSmoothingPool, distributorAddress, avgFee} = await getNodeInfo(minipoolAddress, blockNumber)
+    const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
+    await write(`${nodeAddress},${distributorAddress},${inSmoothingPool},${avgFee},${ethCollatRatio},`)
+  }
+  else {
+    await write(',,,,,')
+  }
+
   let [maxBid, maxBidRelay] = ['', '']
   for (const relayName of relayApiUrls.keys()) {
     const relayBid = db.get([slotNumber.toString(), relayName, 'maxBid']) || ''
@@ -637,25 +656,8 @@ while (slotNumber <= lastSlot) {
   await write(`${mevReward},${mevRewardRelays.join(';')},`)
   console.log(`Slot ${slotNumber}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
     mevRewardRelay ? mevRewardRelay.concat(' via ', mevFeeRecipient) : '(none)'}`)
-  const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
-  const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
-  await write(`${proposerIndex},${isRocketpool},`)
   console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
-  if (isRocketpool) {
-    const {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee} = await getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockNumber)
-    const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
-    console.log(`mevFeeRecipient: ${mevFeeRecipient}, feeRecipient: ${feeRecipient}`)
-    const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
-    const priorityFees = mevReward ? '' : await getPriorityFees(blockNumber)
-    const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
-    await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees},${avgFee},${ethCollatRatio}\n`)
-    console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient} (${effectiveFeeRecipient} ${hasCorrectFeeRecipient ? '=' : '≠'} ${correctFeeRecipient})`)
-    console.log(`Slot ${slotNumber}: Average fee ${ethers.formatEther(avgFee)}, ETH collat ${ethers.formatEther(ethCollatRatio)}`)
-    if (priorityFees) console.log(`Slot ${slotNumber}: Priority fees ${ethers.formatEther(priorityFees)} ETH`)
-  }
-  else {
-    await write(',,,,,\n')
-  }
+
   slotNumber++
 }
 await endOut()
