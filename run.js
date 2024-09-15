@@ -3,7 +3,7 @@ import 'dotenv/config'
 import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, readFileSync } from 'node:fs'
 import { open } from 'lmdb'
 import { JSDOM } from 'jsdom'
 
@@ -534,9 +534,21 @@ async function getBeaconchaInfo(slotKey) {
   return result
 }
 
-async function getMevMonitorInfo(slotKey) {
-  // TODO
-  return {}
+const mevmonitorFiles = [
+  {fromSlot: 8000000, toSlot: 8000031, filename: 'mevmonitor/mevmonitor-epoch-250000-slots-8000000-8000031.json', contents: null}
+]
+
+async function getMevMonitorInfo(slotNumber) {
+  const key = ['mevmonitor', slotNumber.toString()]
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  // TODO: binary instead of linear search?
+  const fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
+  if (!fileData.contents) fileData.contents = JSON.parse(readFileSync(fileData.fileName))
+  const {top_bids, delivered_payloads} = fileData.contents[slotNumber]
+  // TODO: get maxBid, maxBidRelay, reward, reward relays, feerecipients
+  const result = {}
+  return result
 }
 
 const timestamp = () => Intl.DateTimeFormat('en-GB',
@@ -725,7 +737,7 @@ while (slotNumber <= lastSlot) {
   await write(`${bcReward},${bcRelays},${bcFeeRecipient},`)
 
   // mevmonitor
-  const {maxBid: mmBid, maxBidRelay, mmBidRelays, mevReward: mmReward, mevRewardRelay: mmRelays, feeRecipient: mmFeeRecipient} = await getMevMonitorInfo(slotKey)
+  const {maxBid: mmBid, maxBidRelay, mmBidRelays, mevReward: mmReward, mevRewardRelay: mmRelays, feeRecipient: mmFeeRecipient} = await getMevMonitorInfo(slotNumber)
   await write(`${mmBid},${mmBidRelays},${mmReward},${mmRelays},${mmFeeRecipient}\n`)
 
   slotNumber++
