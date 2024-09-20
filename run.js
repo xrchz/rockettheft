@@ -535,7 +535,7 @@ async function getBeaconchaInfo(slotKey) {
 }
 
 const mevmonitorFiles = [
-  {fromSlot: 8000000, toSlot: 8000031, filename: 'mevmonitor/mevmonitor-epoch-250000-slots-8000000-8000031.json', contents: null}
+  {fromSlot: 8000000, toSlot: 8000031, fileName: 'mevmonitor/mevmonitor-epoch-250000-slots-8000000-8000031.json', contents: null}
 ]
 
 async function getMevMonitorInfo(slotNumber) {
@@ -567,11 +567,16 @@ async function getMevMonitorInfo(slotNumber) {
     feeRecipients.push(proposer_fee_recipient)
   }
   const result = {
-    maxBid,
-    maxBidRelay: maxBidRelays.join(';'),
-    mevReward,
-    mevRewardRelay: rewardRelays.join(';'),
-    feeRecipient: feeRecipients.join(';'),
+    maxBid: '', maxBidRelay: '', mevReward: '', mevRewardRelay: '', feeRecipient: ''
+  }
+  if (maxBid) {
+    result.maxBid = maxBid.toString()
+    result.maxBidRelay = maxBidRelays.join(';')
+  }
+  if (mevReward) {
+    result.mevReward = mevReward.toString()
+    result.mevRewardRelay = rewardRelays.join(';')
+    result.feeRecipient = feeRecipients.join(';')
   }
   await db.put(key, result)
   return result
@@ -763,7 +768,7 @@ while (slotNumber <= lastSlot) {
   await write(`${bcReward},${bcRelays},${bcFeeRecipient},`)
 
   // mevmonitor
-  const {maxBid: mmBid, maxBidRelay, mmBidRelays, mevReward: mmReward, mevRewardRelay: mmRelays, feeRecipient: mmFeeRecipient} = await getMevMonitorInfo(slotNumber)
+  const {maxBid: mmBid, maxBidRelay: mmBidRelays, mevReward: mmReward, mevRewardRelay: mmRelays, feeRecipient: mmFeeRecipient} = await getMevMonitorInfo(slotNumber)
   await write(`${mmBid},${mmBidRelays},${mmReward},${mmRelays},${mmFeeRecipient}\n`)
 
   slotNumber++
