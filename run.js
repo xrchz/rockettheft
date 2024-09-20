@@ -512,11 +512,12 @@ async function getBeaconchaInfo(slotKey, blockNumber) {
   }
   const {status, data} = await fetch(`https://beaconcha.in/api/v1/execution/block/${blockNumber}`, {headers}).then(r => r.json())
   if (status !== 'OK') throw new Error(`Bad status ${status} fetching ${blockNumber} from beaconcha`)
+  const bdata = data[0]
   const result = {mevReward: '', mevRewardRelay: '', feeRecipient: ''}
-  if (data.blockMevReward)
-    result.mevReward = data.blockMevReward
-  if (data.relay) {
-    const {tag, producerFeeRecipient} = data.relay
+  if (bdata.blockMevReward)
+    result.mevReward = bdata.blockMevReward
+  if (bdata.relay) {
+    const {tag, producerFeeRecipient} = bdata.relay
     result.mevRewardRelay = tag
     result.feeRecipient = producerFeeRecipient
   }
