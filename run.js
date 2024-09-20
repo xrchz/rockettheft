@@ -5,7 +5,6 @@ import { ethers } from 'ethers'
 import { program } from 'commander'
 import { createWriteStream, readFileSync } from 'node:fs'
 import { open } from 'lmdb'
-import { JSDOM } from 'jsdom'
 
 const relayApiUrls = new Map()
 relayApiUrls.set('Flashbots',
@@ -502,35 +501,26 @@ async function populateSlotInfo(slotNumber) {
   }
 }
 
-async function getBeaconchaInfo(slotKey) {
+async function getBeaconchaInfo(slotKey, blockNumber) {
   const key = ['beaconcha', slotKey]
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   // TODO add delay in case of rate-limiting
   const headers = {
     'Accept': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:122.0) Gecko/20100101 Firefox/122.0'
+    'apikey': process.env.BEACONCHA_API_KEY,
   }
-  const beaconcha = await fetch(`https://beaconcha.in/slot/${slotKey}`, {headers}).then(r => r.text()).then(t => {
-    console.log(`Got this text for JSDOM:`)
-    console.log(t)
-    console.log(`DONE`)
-    return new JSDOM(t).window.document
-  })
-  const beaconchaRelays = Array.from(beaconcha.querySelectorAll('div.tags > a')).map(
-    a => a.dataset.originalTitle.slice('Block proposed using the '.length, -(' Relay').length)
-  ).map(n => n.toLowerCase().replaceAll('-', ' '))
-  console.log(`${slotKey}: Got ${beaconchaRelays.length} beaconcha relays: ${beaconchaRelays}`)
-  const beaconchaMEVFeeRecipient = beaconcha.querySelector('div.mx-0 > div.col-md-10 > a > span.text-monospace')?.innerText?.toLowerCase()
-  const beaconchaMEVRewardTitle = Array.from(
-    beaconcha.querySelectorAll('div.mx-0 > div.col-md-2 > span')
-  ).find(
-    s => s.innerText.startsWith('MEV Block Reward')
-  )?.parentElement.nextElementSibling.firstElementChild.dataset.originalTitle
-  const beaconchaMEVReward = beaconchaMEVRewardTitle ? ethers.parseEther(beaconchaMEVRewardTitle).toString() : ''
-  console.log(`${slotKey}: Got beaconcha MEV Fee Recipient ${beaconchaMEVFeeRecipient} and reward ${beaconchaMEVRewardTitle}`)
-  const result = {mevReward: beaconchaMEVReward, mevRewardRelay: beaconchaRelays.join(';'), feeRecipient: beaconchaMEVFeeRecipient}
-  //TODO: await db.put(key, result)
+  const {status, data} = await fetch(`https://beaconcha.in/api/v1/execution/block/${blockNumber}`, {headers}).then(r => r.json())
+  if (status !== 'OK') throw new Error(`Bad status ${status} fetching ${blockNumber} from beaconcha`)
+  const result = {mevReward: '', mevRewardRelay: '', feeRecipient: ''}
+  if (data.blockMevReward)
+    result.mevReward = data.blockMevReward
+  if (data.relay) {
+    const {tag, producerFeeRecipient} = data.relay
+    result.mevRewardRelay = tag
+    result.feeRecipient = producerFeeRecipient
+  }
+  await db.put(key, result)
   return result
 }
 
@@ -764,7 +754,7 @@ while (slotNumber <= lastSlot) {
     mevRewardRelays.length ? mevRewardRelays.join('; ').concat(` via ${mevFeeRecipient}`) : '(none)'}`)
   console.log(`Slot ${slotKey}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
 
-  const {mevReward: bcReward, mevRewardRelay: bcRelays, feeRecipient: bcFeeRecipient } = await getBeaconchaInfo(slotKey)
+  const {mevReward: bcReward, mevRewardRelay: bcRelays, feeRecipient: bcFeeRecipient } = await getBeaconchaInfo(slotKey, blockNumber)
   await write(`${bcReward},${bcRelays},${bcFeeRecipient},`)
 
   // mevmonitor
