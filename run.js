@@ -546,8 +546,34 @@ async function getMevMonitorInfo(slotNumber) {
   const fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
   if (!fileData.contents) fileData.contents = JSON.parse(readFileSync(fileData.fileName))
   const {top_bids, delivered_payloads} = fileData.contents[slotNumber]
-  // TODO: get maxBid, maxBidRelay, reward, reward relays, feerecipients
-  const result = {}
+  let maxBid = 0n
+  const maxBidRelays = []
+  for (const {relay, value} of top_bids) {
+    if (maxBid < BigInt(value)) {
+      maxBid = BigInt(value)
+      maxBidRelays.splice(0, maxBidRelays.length, relay)
+    }
+    else if (maxBid == BigInt(value))
+      maxBidRelays.push(relay)
+  }
+  let mevReward
+  const rewardRelays = []
+  const feeRecipients = []
+  for (const {relay, value, proposer_fee_recipient} of delivered_payloads) {
+    if (mevReward && mevReward != BigInt(value))
+      throw new Error(`Slot ${slotNumber}: Duplicate MEV reward ${value} vs ${mevReward} for ${relay} vs ${rewardRelays}`)
+    if (!mevReward) mevReward = BigInt(value)
+    rewardRelays.push(relay)
+    feeRecipients.push(proposer_fee_recipient)
+  }
+  const result = {
+    maxBid,
+    maxBidRelay: maxBidRelays.join(';'),
+    mevReward,
+    mevRewardRelay: rewardRelays.join(';'),
+    feeRecipient: feeRecipients.join(';'),
+  }
+  await db.put(key, result)
   return result
 }
 
