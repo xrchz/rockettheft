@@ -3,7 +3,7 @@ import 'dotenv/config'
 import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { createWriteStream, readFileSync } from 'node:fs'
+import { createWriteStream, readFileSync, readdirSync } from 'node:fs'
 import { open } from 'lmdb'
 
 const relayApiUrls = new Map()
@@ -525,9 +525,16 @@ async function getBeaconchaInfo(slotKey, blockNumber) {
   return result
 }
 
-const mevmonitorFiles = [
-  {fromSlot: 8000000, toSlot: 8000031, fileName: 'mevmonitor/mevmonitor-epoch-250000-slots-8000000-8000031.json', contents: null}
-]
+const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json')).map(n => {
+  const [fromSlotStr, rest] = n.split('-')
+  const [toSlotStr] = rest.split('.')
+  return {
+    fromSlot: parseInt(fromSlotStr),
+    toSlot: parseInt(toSlotStr),
+    fileName: `mevmonitor/${n}`,
+    contents: null
+  }
+})
 
 async function getMevMonitorInfo(slotNumber) {
   const key = ['mevmonitor', slotNumber.toString()]
