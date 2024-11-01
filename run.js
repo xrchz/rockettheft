@@ -501,7 +501,7 @@ async function populateSlotInfo(slotNumber) {
   }
 }
 
-async function getBeaconchaInfo(slotKey, blockNumber) {
+async function getBeaconchaInfoApi(slotKey, blockNumber) {
   const key = ['beaconcha', slotKey]
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
@@ -522,6 +522,50 @@ async function getBeaconchaInfo(slotKey, blockNumber) {
     result.feeRecipient = producerFeeRecipient
   }
   await db.put(key, result)
+  return result
+}
+
+const beaconchaFilename = 'beaconcha/8.000-8.003k.txt'
+const beaconchaFileLines = readFileSync(beaconchaFilename, 'utf8').split('\n')
+beaconchaFileLines.shift() // titles
+beaconchaFileLines.shift() // header border
+const beaconchaData = {}
+for (const line of beaconchaFileLines) {
+  const fields = line.split('|')
+  const tag = fields.shift().trim()
+  const slot = fields.shift().trim()
+  const proposerIndex = fields.shift()
+  const feeRecipient = `0${fields.shift().trim().substring(1)}`
+  const value = fields.shift().trim()
+  beaconchaData[slot] ||= {}
+  if (beaconchaData[slot].mevReward)
+    if(value !== beaconchaData[slot].mevReward)
+      throw new Error(`Inconsistent mevReward from beaconcha for slot ${slot}: ${value} vs ${beaconchaData[slot].mevReward}`)
+  else
+    beaconchaData[slot].mevReward = value
+  if (beaconchaData[slot].feeRecipient)
+    if(feeRecipient !== beaconchaData[slot].feeRecipient)
+      throw new Error(`Inconsistent feeRecipient from beaconcha for slot ${slot}: ${feeRecipient} vs ${beaconchaData[slot].feeRecipient}`)
+  else
+    beaconchaData[slot].feeRecipient = feeRecipient
+  beaconchaData[slot].mevRewardRelays ||= []
+  beaconchaData[slot].mevRewardRelays.push(tag)
+}
+
+async function getBeaconchaInfo(slotKey, blockNumber) {
+  /*
+  const key = ['beaconcha', slotKey]
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  */
+
+  const result = beaconchaData[slotKey] || { mevReward: '', feeRecipient: '', mevRewardRelays: [] }
+  result.mevRewardRelay = result.mevRewardRelays.join(';')
+
+  /*
+  delete result.mevRewardRelays
+  await db.put(key, result)
+  */
   return result
 }
 
