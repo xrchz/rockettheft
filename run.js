@@ -579,6 +579,8 @@ const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json'
     contents: null
   }
 })
+let mevmonitorContentsStored = 0
+const maxContentsStored = 32
 
 async function getMevMonitorInfo(slotNumber) {
   const key = ['mevmonitor', slotNumber.toString()]
@@ -586,7 +588,14 @@ async function getMevMonitorInfo(slotNumber) {
   if (typeof cached != 'undefined') return cached
   // TODO: binary instead of linear search?
   const fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
-  if (!fileData.contents) fileData.contents = JSON.parse(readFileSync(fileData.fileName))
+  if (!fileData.contents) {
+    if (mevmonitorContentsStored >= maxContentsStored) {
+      mevmonitorFiles.find(({contents}) => contents).contents = null
+      mevmonitorContentsStored -= 1
+    }
+    fileData.contents = JSON.parse(readFileSync(fileData.fileName))
+    mevmonitorContentsStored += 1
+  }
   const {top_bids, delivered_payloads} = fileData.contents[slotNumber]
   let maxBid = 0n
   const maxBidRelays = []
