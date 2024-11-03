@@ -538,14 +538,16 @@ for (const line of beaconchaFileLines) {
   const feeRecipient = `0${fields.shift().trim().substring(1)}`
   const value = fields.shift().trim()
   beaconchaData[slot] ||= {}
-  if (beaconchaData[slot].mevReward)
+  if (beaconchaData[slot].mevReward) {
     if(value !== beaconchaData[slot].mevReward)
       throw new Error(`Inconsistent mevReward from beaconcha for slot ${slot}: ${value} vs ${beaconchaData[slot].mevReward}`)
+  }
   else
     beaconchaData[slot].mevReward = value
-  if (beaconchaData[slot].feeRecipient)
+  if (beaconchaData[slot].feeRecipient) {
     if(feeRecipient !== beaconchaData[slot].feeRecipient)
       throw new Error(`Inconsistent feeRecipient from beaconcha for slot ${slot}: ${feeRecipient} vs ${beaconchaData[slot].feeRecipient}`)
+  }
   else
     beaconchaData[slot].feeRecipient = feeRecipient
   beaconchaData[slot].mevRewardRelays ||= []
