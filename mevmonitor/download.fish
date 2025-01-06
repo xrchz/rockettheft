@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-set -l era (string sub -s -11 -e -6 $argv[1])
+set -l era (string match -rg '(\d+)' $argv[1])
 cat $argv[1] | while read -l line
   echo "read line $line"
   if string match -v -q "*mevmonitor*" $line
