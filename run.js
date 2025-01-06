@@ -571,7 +571,7 @@ async function getBeaconchaInfo(slotKey, blockNumber) {
   return result
 }
 
-const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json')).map(n => {
+const mevmonitorFileInfo = (n) => {
   const [fromSlotStr, rest] = n.split('-')
   const [toSlotStr] = rest.split('.')
   return {
@@ -580,7 +580,9 @@ const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json'
     fileName: `mevmonitor/${n}`,
     contents: null
   }
-})
+}
+
+const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json')).map(mevmonitorFileInfo)
 let mevmonitorContentsStored = 0
 const maxContentsStored = 32
 
@@ -589,9 +591,23 @@ async function getMevMonitorInfo(slotNumber) {
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
   // TODO: binary instead of linear search?
-  const fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
+  let fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
+  if (!fileData) {
+    for (const n of readdirSync('mevmonitor').filter(n => n.endsWith('.json'))) {
+      const info = mevmonitorFileInfo(n)
+      if (!mevmonitorFiles.some(({fileName}) => fileName == info.fileName)) {
+        mevmonitorFiles.push(info)
+        if (info.fromSlot <= slotNumber && slotNumber <= info.toSlot) {
+          fileData = info
+          break
+        }
+      }
+    }
+  }
+  // console.log(`${timestamp()} mm1`)
   if (!fileData.contents) {
     if (mevmonitorContentsStored >= maxContentsStored) {
+      // TODO: LRU
       mevmonitorFiles.find(({contents}) => contents).contents = null
       mevmonitorContentsStored -= 1
     }
