@@ -4,4 +4,5 @@ data
 db
 mevmonitor/*.json
 mevmonitor/*.html
+mevmonitor/era-*
 beaconcha/*.txt
