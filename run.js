@@ -6,6 +6,10 @@ import { program } from 'commander'
 import { createWriteStream, readFileSync, readdirSync } from 'node:fs'
 import { open } from 'lmdb'
 
+const timestamp = () => Intl.DateTimeFormat('en-GB',
+  {hour: 'numeric', minute: 'numeric', second: 'numeric'})
+  .format(new Date())
+
 const relayApiUrls = new Map()
 relayApiUrls.set('Flashbots',
   {
@@ -187,6 +191,7 @@ let minipoolsByPubkey
 
 async function populateMinipoolsByPubkey(blockTag) {
   if (minipoolsLastBlock < blockTag) {
+    // console.log(`debug: populateMinipoolsByPubkey to ${blockTag}...`)
     const rocketMinipoolManager = new ethers.Contract(
       await getRocketAddress('rocketMinipoolManager', blockTag),
       [// 'function getMinipoolByPubkey(bytes) view returns (address)', We can't just use this because it's broken (as of Atlas), in particular for minipools that started vacant
@@ -201,6 +206,7 @@ async function populateMinipoolsByPubkey(blockTag) {
       minipoolsByPubkey = db.get(['minipoolsByPubkey']) || new Map()
       const missing = Array(targetCount)
       let index = minipoolsByPubkey.size
+      // console.log(`debug: populateMinipoolsByPubkey working from index ${index}...`)
       while (index < targetCount) {
         const toAdd = Math.min(targetCount - index, multicallLimit)
         const addressCalls = Array.from(Array(toAdd).keys()).map(i => [
@@ -424,6 +430,7 @@ async function getPriorityFees(blockNumber) {
   const key = [blockNumber.toString(), 'prioFees']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
+  // throw new Error('DEBUG: expected cached getPriorityFees')
   const block = await provider.getBlock(blockNumber)
   const gasUsed = block.gasUsed
   const baseFeePerGas = block.baseFeePerGas
@@ -442,6 +449,7 @@ async function getLastTxInfo(blockNumber) {
   const key = [blockNumber.toString(), 'lastTx']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
+  // throw new Error('DEBUG: expected cached getLastTxInfo')
   const block = await provider.getBlock(blockNumber)
   const lastTxHash = block.transactions.at(-1)
   const lastTx = lastTxHash ? await provider.getTransaction(lastTxHash) : {to: '', value: ''}
@@ -457,6 +465,7 @@ async function populateSlotInfo(slotNumber) {
     const keyPrefix = [slotKey, relayName]
     const maxBidKey = keyPrefix.concat(['maxBid'])
     if (typeof db.get(maxBidKey) == 'undefined') {
+      // throw new Error('DEBUG: expected cached getBids')
       const bids = await getBids(slotKey, relayName, relayApiUrl)
       const maxBid = bids.length ?
         bids.reduce((max, bid) => max > bid ? max : bid, 0n).toString() :
@@ -465,6 +474,7 @@ async function populateSlotInfo(slotNumber) {
     }
     const proposedKey = keyPrefix.concat(['proposed'])
     if (typeof db.get(proposedKey) == 'undefined') {
+      // throw new Error('DEBUG: expected cached getPayload')
       const payload = await getPayload(slotNumber, relayName, relayApiUrl)
       const result = payload ?
         {mevReward: payload.value.toString(),
@@ -474,6 +484,7 @@ async function populateSlotInfo(slotNumber) {
     }
   }
   if (typeof db.get([slotKey]) == 'undefined') {
+    // throw new Error('DEBUG: expected cached slotKey')
     const result = {}
     const path = `/eth/v1/beacon/blinded_blocks/${slotKey}`
     const url = new URL(path, beaconRpcUrl)
@@ -501,6 +512,7 @@ async function populateSlotInfo(slotNumber) {
   }
 }
 
+/*
 async function getBeaconchaInfoApi(slotKey, blockNumber) {
   const key = ['beaconcha', slotKey]
   const cached = db.get(key)
@@ -552,23 +564,15 @@ for (const line of beaconchaFileLines) {
     beaconchaData[slot].feeRecipient = feeRecipient
   beaconchaData[slot].mevRewardRelays ||= []
   beaconchaData[slot].mevRewardRelays.push(tag)
+  // console.log(`For ${slot} got ${value} ${feeRecipient} ${tag} from beaconcha`)
 }
+*/
 
 async function getBeaconchaInfo(slotKey, blockNumber) {
-  /*
   const key = ['beaconcha', slotKey]
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
-  */
-
-  const result = beaconchaData[slotKey] || { mevReward: '', feeRecipient: '', mevRewardRelays: [] }
-  result.mevRewardRelay = result.mevRewardRelays.join(';')
-
-  /*
-  delete result.mevRewardRelays
-  await db.put(key, result)
-  */
-  return result
+  else throw new Error(`Beaconcha import missing for slot ${slotKey}`)
 }
 
 const mevmonitorFileInfo = (n) => {
@@ -590,6 +594,7 @@ async function getMevMonitorInfo(slotNumber) {
   const key = ['mevmonitor', slotNumber.toString()]
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
+  // console.log(`${timestamp()} mm0`)
   // TODO: binary instead of linear search?
   let fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
   if (!fileData) {
@@ -614,6 +619,7 @@ async function getMevMonitorInfo(slotNumber) {
     fileData.contents = JSON.parse(readFileSync(fileData.fileName))
     mevmonitorContentsStored += 1
   }
+  // console.log(`${timestamp()} mm2`)
   const {top_bids, delivered_payloads} = fileData.contents[slotNumber]
   let maxBid = 0n
   const maxBidRelays = []
@@ -625,6 +631,7 @@ async function getMevMonitorInfo(slotNumber) {
     else if (maxBid == BigInt(value))
       maxBidRelays.push(relay)
   }
+  // console.log(`${timestamp()} mm3`)
   let mevReward
   const rewardRelays = []
   const feeRecipients = []
@@ -635,6 +642,7 @@ async function getMevMonitorInfo(slotNumber) {
     rewardRelays.push(relay)
     feeRecipients.push(proposer_fee_recipient)
   }
+  // console.log(`${timestamp()} mm4`)
   const result = {
     maxBid: '', maxBidRelay: '', mevReward: '', mevRewardRelay: '', feeRecipient: ''
   }
@@ -647,13 +655,11 @@ async function getMevMonitorInfo(slotNumber) {
     result.mevRewardRelay = rewardRelays.join(';')
     result.feeRecipient = feeRecipients.join(';')
   }
+  // console.log(`${timestamp()} mm5`)
   await db.put(key, result)
+  // console.log(`${timestamp()} mm6`)
   return result
 }
-
-const timestamp = () => Intl.DateTimeFormat('en-GB',
-  {hour: 'numeric', minute: 'numeric', second: 'numeric'})
-  .format(new Date())
 
 const firstSlot = parseInt(options.slot)
 const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
@@ -768,6 +774,7 @@ while (slotNumber <= lastSlot) {
   console.log(`${timestamp()}: Ensuring cache for ${slotNumber}`)
 
   await populateSlotInfo(slotNumber)
+
   const slotKey = slotNumber.toString()
   await write(`${slotKey},`)
   console.log(timestamp())
@@ -783,6 +790,8 @@ while (slotNumber <= lastSlot) {
   const priorityFees = await getPriorityFees(blockNumber)
   await write(`${proposerIndex},${feeRecipient},${lastTxRecipient},${lastTxValue},${priorityFees},`)
 
+  console.log(`${timestamp()} pp1`)
+
   const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
   const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
   await write(`${isRocketpool},`)
@@ -794,6 +803,8 @@ while (slotNumber <= lastSlot) {
   else {
     await write(',,,,,')
   }
+
+  console.log(`${timestamp()} pp2`)
 
   let maxBid = ''
   const maxBidRelays = []
@@ -828,6 +839,9 @@ while (slotNumber <= lastSlot) {
       mevRewardRelays.push(relayName)
     }
   }
+
+  console.log(`${timestamp()} pp3`)
+
   await write(`${mevReward},${mevRewardRelays.join(';')},${mevFeeRecipient},`)
   console.log(`Slot ${slotKey}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
     mevRewardRelays.length ? mevRewardRelays.join('; ').concat(` via ${mevFeeRecipient}`) : '(none)'}`)
