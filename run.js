@@ -35,7 +35,7 @@ relayApiUrls.set('Blocknative',
   {
     url: 'https://0x9000009807ed12c1f08bf4e81c6da3ba8e3fc3d953898ce0102433094e5f22f21102ec057841fcb81978ed1ea0fa8246@builder-relay-mainnet.blocknative.com',
     startSlot: 0,
-    endSlot: 7459420
+    endSlot: 7344999 // SHOULD BE 7459420 but we failed to collect data before they shut down
   })
 relayApiUrls.set('Eden Network',
   {
@@ -124,13 +124,16 @@ async function fetchRelayApi(relayApiUrl, path, params) {
   return response
 }
 
+const badSlots = {
+  'bloXroute Regulated': [6209964, 8037005, 8053706, 8054714, 8065991],
+  'Ultra Sound': [8118421],
+}
+
 async function getPayload(slotNumber, relayName, relayApiUrl) {
   if ((relayName == 'bloXroute Max Profit' &&
        [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871].includes(slotNumber)) ||
-      (relayName == 'bloXroute Regulated' &&
-       [6209964, 8037005, 8053706, 8054714, 8065991].includes(slotNumber)) ||
-      (relayName == 'Ultra Sound' &&
-       [8118421].includes(slotNumber))) {
+      (relayName == 'bloXroute Regulated' && badSlots[relayName].includes(slotNumber)) ||
+      (relayName == 'Ultra Sound' && badSlots[relayName].includes(slotNumber))) {
     console.warn(`Special case: assuming no ${relayName} payload for slot ${slotNumber}`)
     return 0
   }
@@ -636,6 +639,12 @@ async function getMevMonitorInfo(slotNumber) {
   const rewardRelays = []
   const feeRecipients = []
   for (const {relay, value, proposer_fee_recipient} of delivered_payloads) {
+    if ((badSlots['bloXroute Regulated'].includes(slotNumber) && relay == 'bloxroute.regulated.blxrbdn.com') ||
+        (badSlots['Ultra Sound'].includes(slotNumber) && ['agnostic-relay.net', 'relay.ultrasound.money'].includes(relay)))
+      {
+      console.warn(`Special case: assuming no ${relay} payload for slot ${slotNumber}`)
+      continue
+    }
     if (mevReward && mevReward != BigInt(value))
       throw new Error(`Slot ${slotNumber}: Duplicate MEV reward ${value} vs ${mevReward} for ${relay} vs ${rewardRelays}`)
     if (!mevReward) mevReward = BigInt(value)
