@@ -150,6 +150,11 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
     console.warn(`Special case: discarding extra ${relayName} payloads for slot ${slotNumber}`)
     payloads.pop()
   }
+  if (relayName == 'Flashbots' && slotNumber == 10599355 &&
+      payloads.length == 2 && payloads[0].value == '20541292660255419') {
+    console.warn(`Special case: discarding extra ${relayName} payloads for slot ${slotNumber}`)
+    payloads.pop()
+  }
   if (!(payloads instanceof Array && payloads.length <= 1)) {
     console.warn(`Unexpected result for ${slotNumber} payload from ${relayName}: ${JSON.stringify(payloads)}`)
     return {}
