@@ -800,7 +800,7 @@ while (slotNumber <= lastSlot) {
   const priorityFees = await getPriorityFees(blockNumber)
   await write(`${proposerIndex},${feeRecipient},${lastTxRecipient},${lastTxValue},${priorityFees},`)
 
-  console.log(`${timestamp()} pp1`)
+  // console.log(`${timestamp()} pp1`)
 
   const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
   const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
@@ -814,7 +814,7 @@ while (slotNumber <= lastSlot) {
     await write(',,,,,')
   }
 
-  console.log(`${timestamp()} pp2`)
+  // console.log(`${timestamp()} pp2`)
 
   let maxBid = ''
   const maxBidRelays = []
@@ -850,7 +850,7 @@ while (slotNumber <= lastSlot) {
     }
   }
 
-  console.log(`${timestamp()} pp3`)
+  // console.log(`${timestamp()} pp3`)
 
   await write(`${mevReward},${mevRewardRelays.join(';')},${mevFeeRecipient},`)
   console.log(`Slot ${slotKey}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
