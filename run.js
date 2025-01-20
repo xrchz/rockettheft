@@ -126,12 +126,12 @@ async function fetchRelayApi(relayApiUrl, path, params) {
 
 const badSlots = {
   'bloXroute Regulated': [6209964, 8037005, 8053706, 8054714, 8065991],
+  'bloXroute Max Profit': [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871],
   'Ultra Sound': [8118421],
 }
 
 async function getPayload(slotNumber, relayName, relayApiUrl) {
-  if ((relayName == 'bloXroute Max Profit' &&
-       [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871].includes(slotNumber)) ||
+  if ((relayName == 'bloXroute Max Profit' && badSlots[relayName].includes(slotNumber)) ||
       (relayName == 'bloXroute Regulated' && badSlots[relayName].includes(slotNumber)) ||
       (relayName == 'Ultra Sound' && badSlots[relayName].includes(slotNumber))) {
     console.warn(`Special case: assuming no ${relayName} payload for slot ${slotNumber}`)
@@ -640,6 +640,7 @@ async function getMevMonitorInfo(slotNumber) {
   const feeRecipients = []
   for (const {relay, value, proposer_fee_recipient} of delivered_payloads) {
     if ((badSlots['bloXroute Regulated'].includes(slotNumber) && relay == 'bloxroute.regulated.blxrbdn.com') ||
+        (badSlots['bloXroute Max Profit'].includes(slotNumber) && relay == 'bloxroute.max-profit.blxrbn.com') ||
         (badSlots['Ultra Sound'].includes(slotNumber) && ['agnostic-relay.net', 'relay.ultrasound.money'].includes(relay)))
       {
       console.warn(`Special case: assuming no ${relay} payload for slot ${slotNumber}`)
