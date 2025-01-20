@@ -640,7 +640,7 @@ async function getMevMonitorInfo(slotNumber) {
   const feeRecipients = []
   for (const {relay, value, proposer_fee_recipient} of delivered_payloads) {
     if ((badSlots['bloXroute Regulated'].includes(slotNumber) && relay == 'bloxroute.regulated.blxrbdn.com') ||
-        (badSlots['bloXroute Max Profit'].includes(slotNumber) && relay == 'bloxroute.max-profit.blxrbn.com') ||
+        (badSlots['bloXroute Max Profit'].includes(slotNumber) && relay == 'bloxroute.max-profit.blxrbdn.com') ||
         (badSlots['Ultra Sound'].includes(slotNumber) && ['agnostic-relay.net', 'relay.ultrasound.money'].includes(relay)))
       {
       console.warn(`Special case: assuming no ${relay} payload for slot ${slotNumber}`)
