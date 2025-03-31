@@ -6,10 +6,9 @@
   "type": "module",
   "dependencies": {
     "ethers": "6",
-    "commander": "11",
+    "commander": "12",
     "dotenv": "16",
     "lmdb": "3",
-    "jsdom": "24",
-    "undici": "5"
+    "undici": "6"
   }
 }
