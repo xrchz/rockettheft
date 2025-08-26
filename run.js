@@ -45,6 +45,12 @@ relayApiUrls.set('Ultra Sound',
     startSlot: 0,
     endSlot: Infinity
   })
+relayApiUrls.set('Ultra Sound Filtered',
+  {
+    url: 'https://0xa1559ace749633b997cb3fdacffb890aeebdb0f5a3b6aaa7eeeaf1a38af0a8fe88b9e4b1f61f236d2e64d95733327a62@relay-filtered.ultrasound.money',
+    startSlot: 22927632,
+    endSlot: Infinity
+  })
 relayApiUrls.set('Aestus',
   {
     url: 'https://0xa15b52576bcbf1072f4a011c0f99f9fb6c66f3e1ff321f11f461d15e31b1cb359caa092c71bbded0bae5b5ea401aab7e@aestus.live',
@@ -56,15 +62,19 @@ relayApiUrls.set('Titan Global',
     url: 'https://0x8c4ed5e24fe5c6ae21018437bde147693f68cda427cd1122cf20819c30eda7ed74f72dece09bb313f2a1855595ab677d@global.titanrelay.xyz',
     startSlot: 9079779,
     endSlot: Infinity
-  }
-)
+  })
 relayApiUrls.set('Titan Regional',
   {
     url: 'https://0x8c4ed5e24fe5c6ae21018437bde147693f68cda427cd1122cf20819c30eda7ed74f72dece09bb313f2a1855595ab677d@regional.titanrelay.xyz',
     startSlot: 9079779,
     endSlot: Infinity
-  }
-)
+  })
+relayApiUrls.set('BTCS OFAC+',
+  {
+    url: 'https://0xb66921e917a8f4cfc3c52e10c1e5c77b1255693d9e6ed6f5f444b71ca4bb610f2eff4fa98178efbf4dd43a30472c497e@relay.btcs.com',
+    startSlot: 22927632,
+    endSlot: Infinity
+  })
 
 const rocketStorageAddress = '0x1d8f8f00cfa6758d7bE78336684788Fb0ee0Fa46'
 
