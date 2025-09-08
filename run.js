@@ -3,8 +3,12 @@ import 'dotenv/config'
 import { ProxyAgent } from 'undici'
 import { ethers } from 'ethers'
 import { program } from 'commander'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, readFileSync, readdirSync } from 'node:fs'
 import { open } from 'lmdb'
+
+const timestamp = () => Intl.DateTimeFormat('en-GB',
+  {hour: 'numeric', minute: 'numeric', second: 'numeric'})
+  .format(new Date())
 
 const relayApiUrls = new Map()
 relayApiUrls.set('Flashbots',
@@ -31,7 +35,7 @@ relayApiUrls.set('Blocknative',
   {
     url: 'https://0x9000009807ed12c1f08bf4e81c6da3ba8e3fc3d953898ce0102433094e5f22f21102ec057841fcb81978ed1ea0fa8246@builder-relay-mainnet.blocknative.com',
     startSlot: 0,
-    endSlot: 7459420
+    endSlot: 7344999 // SHOULD BE 7459420 but we failed to collect data before they shut down
   })
 relayApiUrls.set('Eden Network',
   {
@@ -130,13 +134,16 @@ async function fetchRelayApi(relayApiUrl, path, params) {
   return response
 }
 
+const badSlots = {
+  'bloXroute Regulated': [6209964, 8037005, 8053706, 8054714, 8065991],
+  'bloXroute Max Profit': [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871],
+  'Ultra Sound': [8118421],
+}
+
 async function getPayload(slotNumber, relayName, relayApiUrl) {
-  if ((relayName == 'bloXroute Max Profit' &&
-       [6209620, 6209628, 6209637, 6209654, 6209657, 6209661, 6209675, 6209814, 6209827, 6209867, 6209871].includes(slotNumber)) ||
-      (relayName == 'bloXroute Regulated' &&
-       [6209964, 8037005, 8053706, 8054714, 8065991].includes(slotNumber)) ||
-      (relayName == 'Ultra Sound' &&
-       [8118421].includes(slotNumber))) {
+  if ((relayName == 'bloXroute Max Profit' && badSlots[relayName].includes(slotNumber)) ||
+      (relayName == 'bloXroute Regulated' && badSlots[relayName].includes(slotNumber)) ||
+      (relayName == 'Ultra Sound' && badSlots[relayName].includes(slotNumber))) {
     console.warn(`Special case: assuming no ${relayName} payload for slot ${slotNumber}`)
     return 0
   }
@@ -172,18 +179,18 @@ async function getPayload(slotNumber, relayName, relayApiUrl) {
   return payloads.length && payloads[0]
 }
 
-async function getBids(slotNumber, relayName, relayApiUrl) {
+async function getBids(slotKey, relayName, relayApiUrl) {
   const path = '/relay/v1/data/bidtraces/builder_blocks_received'
-  const params = new URLSearchParams({slot: `${slotNumber}`})
+  const params = new URLSearchParams({slot: `${slotKey}`})
   const response = await fetchRelayApi(relayApiUrl, path, params)
   if (response.status !== 200 && response.status !== 204) {
-    console.warn(`Unexpected response status getting ${slotNumber} bids from ${relayName}: ${response.status}`)
+    console.warn(`Unexpected response status getting ${slotKey} bids from ${relayName}: ${response.status}`)
     console.warn(`URL: ${relayApiUrl} ${path} ${params}`)
     console.warn(`response text: ${await response.text()}`)
   }
   const payloads = response.status === 204 ? [] : await response.json()
   if (!(payloads instanceof Array)) {
-    console.warn(`Unexpected result for ${slotNumber} payload: ${payloads}`)
+    console.warn(`Unexpected result for ${slotKey} payload: ${payloads}`)
     return []
   }
   return payloads.map(x => BigInt(x.value))
@@ -202,6 +209,7 @@ let minipoolsByPubkey
 
 async function populateMinipoolsByPubkey(blockTag) {
   if (minipoolsLastBlock < blockTag) {
+    // console.log(`debug: populateMinipoolsByPubkey to ${blockTag}...`)
     const rocketMinipoolManager = new ethers.Contract(
       await getRocketAddress('rocketMinipoolManager', blockTag),
       [// 'function getMinipoolByPubkey(bytes) view returns (address)', We can't just use this because it's broken (as of Atlas), in particular for minipools that started vacant
@@ -216,6 +224,7 @@ async function populateMinipoolsByPubkey(blockTag) {
       minipoolsByPubkey = db.get(['minipoolsByPubkey']) || new Map()
       const missing = Array(targetCount)
       let index = minipoolsByPubkey.size
+      // console.log(`debug: populateMinipoolsByPubkey working from index ${index}...`)
       while (index < targetCount) {
         const toAdd = Math.min(targetCount - index, multicallLimit)
         const addressCalls = Array.from(Array(toAdd).keys()).map(i => [
@@ -386,7 +395,7 @@ async function getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag) {
   return result
 }
 
-async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
+async function getNodeInfo(minipoolAddress, blockTag) {
   const minipool = new ethers.Contract(
     minipoolAddress,
     ['function getNodeAddress() view returns (address)'], provider)
@@ -397,13 +406,12 @@ async function getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockTag) {
      'function getFeeDistributorInitialised(address) view returns (bool)',
      'function getAverageNodeFee(address) view returns (uint256)'], provider)
   const inSmoothingPool = await rocketNodeManager.getSmoothingPoolRegistrationState(nodeAddress, {blockTag})
-  const SPAddress = await getRocketAddress('rocketSmoothingPool', blockTag)
   const rocketNodeDistributorFactory = new ethers.Contract(
     await getRocketAddress('rocketNodeDistributorFactory', blockTag),
     ['function getProxyAddress(address) view returns (address)'], provider)
-  const correctFeeRecipient = inSmoothingPool ? SPAddress : await rocketNodeDistributorFactory.getProxyAddress(nodeAddress, {blockTag})
+  const distributorAddress = await rocketNodeDistributorFactory.getProxyAddress(nodeAddress, {blockTag})
   const avgFee = await getAverageNodeFee(rocketNodeManager, nodeAddress, blockTag).then(n => n.toString())
-  return {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee}
+  return {nodeAddress, inSmoothingPool, distributorAddress, avgFee}
 }
 
 async function getEthCollatRatio(nodeAddress, blockTag) {
@@ -430,6 +438,9 @@ keys to cache:
 <blockNumber>/<nodeAddress>/avgFee (string or missing)
 <blockNumber>/<nodeAddress>/ethCollatRatio (string or missing)
 <blockNumber>/prioFees (string; missing unless this block proposer is rocketpool and no RP relays have bids)
+<blockNumber>/lastTx {recipient, value}
+beaconcha/<slot> {mevReward, mevRewardRelay, feeRecipient}
+mevmonitor/<slot> {maxBid, maxBidRelay, mevReward, mevRewardRelay, feeRecipient}
 minipoolsByPubkey (map from pubkeys to addresses of minipools)
 */
 
@@ -437,6 +448,7 @@ async function getPriorityFees(blockNumber) {
   const key = [blockNumber.toString(), 'prioFees']
   const cached = db.get(key)
   if (typeof cached != 'undefined') return cached
+  // throw new Error('DEBUG: expected cached getPriorityFees')
   const block = await provider.getBlock(blockNumber)
   const gasUsed = block.gasUsed
   const baseFeePerGas = block.baseFeePerGas
@@ -451,13 +463,28 @@ async function getPriorityFees(blockNumber) {
   return result
 }
 
-async function populateCache(slotNumber) {
+async function getLastTxInfo(blockNumber) {
+  const key = [blockNumber.toString(), 'lastTx']
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  // throw new Error('DEBUG: expected cached getLastTxInfo')
+  const block = await provider.getBlock(blockNumber)
+  const lastTxHash = block.transactions.at(-1)
+  const lastTx = lastTxHash ? await provider.getTransaction(lastTxHash) : {to: '', value: ''}
+  const result = {recipient: lastTx.to, value: lastTx.value.toString()}
+  await db.put(key, result)
+  return result
+}
+
+async function populateSlotInfo(slotNumber) {
+  const slotKey = slotNumber.toString()
   for (const [relayName, {url: relayApiUrl, startSlot, endSlot}] of relayApiUrls.entries()) {
     if (!(startSlot <= slotNumber && slotNumber <= endSlot)) continue
-    const keyPrefix = [slotNumber.toString(), relayName]
+    const keyPrefix = [slotKey, relayName]
     const maxBidKey = keyPrefix.concat(['maxBid'])
     if (typeof db.get(maxBidKey) == 'undefined') {
-      const bids = await getBids(slotNumber, relayName, relayApiUrl)
+      // throw new Error('DEBUG: expected cached getBids')
+      const bids = await getBids(slotKey, relayName, relayApiUrl)
       const maxBid = bids.length ?
         bids.reduce((max, bid) => max > bid ? max : bid, 0n).toString() :
         null
@@ -465,6 +492,7 @@ async function populateCache(slotNumber) {
     }
     const proposedKey = keyPrefix.concat(['proposed'])
     if (typeof db.get(proposedKey) == 'undefined') {
+      // throw new Error('DEBUG: expected cached getPayload')
       const payload = await getPayload(slotNumber, relayName, relayApiUrl)
       const result = payload ?
         {mevReward: payload.value.toString(),
@@ -473,37 +501,190 @@ async function populateCache(slotNumber) {
       await db.put(proposedKey, result)
     }
   }
-  if (typeof db.get([slotNumber.toString()]) == 'undefined') {
+  if (typeof db.get([slotKey]) == 'undefined') {
+    // throw new Error('DEBUG: expected cached slotKey')
     const result = {}
-    const path = `/eth/v1/beacon/blinded_blocks/${slotNumber}`
+    const path = `/eth/v1/beacon/blinded_blocks/${slotKey}`
     const url = new URL(path, beaconRpcUrl)
     const response = await fetch(url)
     if (response.status === 404) {
-      await db.put([slotNumber.toString()], null)
+      await db.put([slotKey], null)
       return
     }
     else if (response.status !== 200) {
-      console.warn(`Unexpected response status getting ${slotNumber} block: ${response.status}`)
+      console.warn(`Unexpected response status getting ${slotKey} block: ${response.status}`)
       console.warn(`response text: ${await response.text()}`)
     }
     const json = await response.json()
     if (!('execution_payload_header' in json.data.message.body &&
           parseInt(json.data.message.body.execution_payload_header.block_number))) {
-      console.warn(`${slotNumber} has no associated post-merge block`)
-      await db.put([slotNumber.toString()], null)
+      console.warn(`${slotKey} has no associated post-merge block`)
+      await db.put([slotKey], null)
       return
     }
     const blockNumber = parseInt(json.data.message.body.execution_payload_header.block_number)
     const feeRecipient = ethers.getAddress(json.data.message.body.execution_payload_header.fee_recipient)
     const proposerIndex = json.data.message.proposer_index
     const proposerPubkey = await getPubkey(proposerIndex)
-    await db.put([slotNumber.toString()], {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
+    await db.put([slotKey], {blockNumber, proposerIndex, proposerPubkey, feeRecipient})
   }
 }
 
-const timestamp = () => Intl.DateTimeFormat('en-GB',
-  {hour: 'numeric', minute: 'numeric', second: 'numeric'})
-  .format(new Date())
+/*
+async function getBeaconchaInfoApi(slotKey, blockNumber) {
+  const key = ['beaconcha', slotKey]
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  // TODO add delay in case of rate-limiting
+  const headers = {
+    'Accept': 'application/json',
+    'apikey': process.env.BEACONCHA_API_KEY,
+  }
+  const {status, data} = await fetch(`https://beaconcha.in/api/v1/execution/block/${blockNumber}`, {headers}).then(r => r.json())
+  if (status !== 'OK') throw new Error(`Bad status ${status} fetching ${blockNumber} from beaconcha`)
+  const bdata = data[0]
+  const result = {mevReward: '', mevRewardRelay: '', feeRecipient: ''}
+  if (bdata.blockMevReward)
+    result.mevReward = bdata.blockMevReward
+  if (bdata.relay) {
+    const {tag, producerFeeRecipient} = bdata.relay
+    result.mevRewardRelay = tag
+    result.feeRecipient = producerFeeRecipient
+  }
+  await db.put(key, result)
+  return result
+}
+
+const beaconchaFilename = 'beaconcha/8.000-8.003k.txt'
+const beaconchaFileLines = readFileSync(beaconchaFilename, 'utf8').split('\n')
+beaconchaFileLines.shift() // titles
+beaconchaFileLines.shift() // header border
+const beaconchaData = {}
+for (const line of beaconchaFileLines) {
+  const fields = line.split('|')
+  const tag = fields.shift().trim()
+  const slot = fields.shift().trim()
+  const proposerIndex = fields.shift()
+  const feeRecipient = `0${fields.shift().trim().substring(1)}`
+  const value = fields.shift().trim()
+  beaconchaData[slot] ||= {}
+  if (beaconchaData[slot].mevReward) {
+    if(value !== beaconchaData[slot].mevReward)
+      throw new Error(`Inconsistent mevReward from beaconcha for slot ${slot}: ${value} vs ${beaconchaData[slot].mevReward}`)
+  }
+  else
+    beaconchaData[slot].mevReward = value
+  if (beaconchaData[slot].feeRecipient) {
+    if(feeRecipient !== beaconchaData[slot].feeRecipient)
+      throw new Error(`Inconsistent feeRecipient from beaconcha for slot ${slot}: ${feeRecipient} vs ${beaconchaData[slot].feeRecipient}`)
+  }
+  else
+    beaconchaData[slot].feeRecipient = feeRecipient
+  beaconchaData[slot].mevRewardRelays ||= []
+  beaconchaData[slot].mevRewardRelays.push(tag)
+  // console.log(`For ${slot} got ${value} ${feeRecipient} ${tag} from beaconcha`)
+}
+*/
+
+async function getBeaconchaInfo(slotKey, blockNumber) {
+  const key = ['beaconcha', slotKey]
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  else throw new Error(`Beaconcha import missing for slot ${slotKey}`)
+}
+
+const mevmonitorFileInfo = (n) => {
+  const [fromSlotStr, rest] = n.split('-')
+  const [toSlotStr] = rest.split('.')
+  return {
+    fromSlot: parseInt(fromSlotStr),
+    toSlot: parseInt(toSlotStr),
+    fileName: `mevmonitor/${n}`,
+    contents: null
+  }
+}
+
+const mevmonitorFiles = readdirSync('mevmonitor').filter(n => n.endsWith('.json')).map(mevmonitorFileInfo)
+let mevmonitorContentsStored = 0
+const maxContentsStored = 32
+
+async function getMevMonitorInfo(slotNumber) {
+  const key = ['mevmonitor', slotNumber.toString()]
+  const cached = db.get(key)
+  if (typeof cached != 'undefined') return cached
+  // console.log(`${timestamp()} mm0`)
+  // TODO: binary instead of linear search?
+  let fileData = mevmonitorFiles.find(({fromSlot, toSlot}) => fromSlot <= slotNumber && slotNumber <= toSlot)
+  if (!fileData) {
+    for (const n of readdirSync('mevmonitor').filter(n => n.endsWith('.json'))) {
+      const info = mevmonitorFileInfo(n)
+      if (!mevmonitorFiles.some(({fileName}) => fileName == info.fileName)) {
+        mevmonitorFiles.push(info)
+        if (info.fromSlot <= slotNumber && slotNumber <= info.toSlot) {
+          fileData = info
+          break
+        }
+      }
+    }
+  }
+  // console.log(`${timestamp()} mm1`)
+  if (!fileData.contents) {
+    if (mevmonitorContentsStored >= maxContentsStored) {
+      // TODO: LRU
+      mevmonitorFiles.find(({contents}) => contents).contents = null
+      mevmonitorContentsStored -= 1
+    }
+    fileData.contents = JSON.parse(readFileSync(fileData.fileName))
+    mevmonitorContentsStored += 1
+  }
+  // console.log(`${timestamp()} mm2`)
+  const {top_bids, delivered_payloads} = fileData.contents[slotNumber]
+  let maxBid = 0n
+  const maxBidRelays = []
+  for (const {relay, value} of top_bids) {
+    if (maxBid < BigInt(value)) {
+      maxBid = BigInt(value)
+      maxBidRelays.splice(0, maxBidRelays.length, relay)
+    }
+    else if (maxBid == BigInt(value))
+      maxBidRelays.push(relay)
+  }
+  // console.log(`${timestamp()} mm3`)
+  let mevReward
+  const rewardRelays = []
+  const feeRecipients = []
+  for (const {relay, value, proposer_fee_recipient} of delivered_payloads) {
+    if ((badSlots['bloXroute Regulated'].includes(slotNumber) && relay == 'bloxroute.regulated.blxrbdn.com') ||
+        (badSlots['bloXroute Max Profit'].includes(slotNumber) && relay == 'bloxroute.max-profit.blxrbdn.com') ||
+        (badSlots['Ultra Sound'].includes(slotNumber) && ['agnostic-relay.net', 'relay.ultrasound.money'].includes(relay)))
+      {
+      console.warn(`Special case: assuming no ${relay} payload for slot ${slotNumber}`)
+      continue
+    }
+    if (mevReward && mevReward != BigInt(value))
+      throw new Error(`Slot ${slotNumber}: Duplicate MEV reward ${value} vs ${mevReward} for ${relay} vs ${rewardRelays}`)
+    if (!mevReward) mevReward = BigInt(value)
+    rewardRelays.push(relay)
+    feeRecipients.push(proposer_fee_recipient)
+  }
+  // console.log(`${timestamp()} mm4`)
+  const result = {
+    maxBid: '', maxBidRelay: '', mevReward: '', mevRewardRelay: '', feeRecipient: ''
+  }
+  if (maxBid) {
+    result.maxBid = maxBid.toString()
+    result.maxBidRelay = maxBidRelays.join(';')
+  }
+  if (mevReward) {
+    result.mevReward = mevReward.toString()
+    result.mevRewardRelay = rewardRelays.join(';')
+    result.feeRecipient = feeRecipients.join(';')
+  }
+  // console.log(`${timestamp()} mm5`)
+  await db.put(key, result)
+  // console.log(`${timestamp()} mm6`)
+  return result
+}
 
 const firstSlot = parseInt(options.slot)
 const lastSlot = options.toSlot ? parseInt(options.toSlot) : firstSlot
@@ -533,17 +714,27 @@ for (const index of Array(parseInt(nodeCount)).keys()) {
 process.exit()
 */
 
-/*
-Current data columns:
-slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,priority_fees,avg_fee,eth_collat_ratio
+const fileName = `data/rt2_slot-${firstSlot}-to-${lastSlot}.csv`
+const outputFile = options.output ? createWriteStream(fileName) : null
+const write = options.output ? async s => new Promise(
+  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
+) : s => null
+const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
+if (options.output) console.log(`Writing to ${fileName}`)
+await write('slot,proposer_index,raw_fee_recipient,last_tx_recipient,last_tx_value,priority_fees,')
+await write('is_rocketpool,node_address,distributor_address,in_smoothing_pool,avg_fee,eth_collat_ratio,')
+await write('max_bid,max_bid_relay,mev_reward,mev_reward_relay,relay_fee_recipient,')
+await write('beaconcha_mev_reward,beaconcha_mev_reward_relay,beaconcha_fee_recipient,')
+await write('mevmonitor_max_bid,mevmonitor_max_bid_relay,mevmonitor_mev_reward,mevmonitor_mev_reward_relay,mevmonitor_fee_recipient\n')
 
+/*
 Desired data columns:
 # Basic slot and block info
 slot,                        # slot number
 proposer_index,              # proposer index [this and the rest empty for missed blocks]
 raw_fee_recipient,           # fee recipient specified for the block
-last_tx_recipient,           # target of the last transaction in the block
-last_tx_value,               # amount of ETH sent in the last transaction in the block
+last_tx_recipient,           # target of the last transaction in the block [empty if there are no transactions]
+last_tx_value,               # amount of ETH sent in the last transaction in the block [ditto]
 priority_fees,               # total ETH paid as transaction fees above the base fee in the block [only included when is_rocketpool and no max_bid]
 # Basic RP info
 is_rocketpool,               # whether the proposer was a Rocket Pool validator
@@ -557,7 +748,7 @@ max_bid,                     # top bid received by RP relays for this slot [this
 max_bid_relay,               # relays that received the top bid [;-separated]
 mev_reward,                  # MEV reward claimed delivered by any RP relay [this and the rest empty if none claimed delivered]
 mev_reward_relay,            # RP relays that claim to have delivered the MEV reward [;-separated]
-relay_fee_recipient,         # Fee recipient according to the RP relay
+relay_fee_recipient,         # Fee recipient according to the RP relay(s)
 # Info we get about relays from Butta
 beaconcha_mev_reward,        # MEV reward claimed delivered by Beaconcha [this and the rest empty if none]
 beaconcha_mev_reward_relay,  # Relays claimed delivered by Beaconcha [;-separated]
@@ -568,7 +759,9 @@ mevmonitor_max_bid_relay,    # relays that received the top bid [;-separated]
 mevmonitor_mev_reward,       # MEV reward claimed delivered by any relay according to MevMonitor [this and the rest empty if none]
 mevmonitor_mev_reward_relay, # Relays claiming to deliver according to MevMonitor [;-separated]
 mevmonitor_fee_recipient     # Fee recipient addresses for deliveries above according to MevMonitor [;-separated]
+*/
 
+/*
 Plan for how to get each item:
 slot,                        # given: just iterate through them
 proposer_index,              # our db: <slot>['proposerIndex']
@@ -591,86 +784,101 @@ mev_reward_relay,            # ditto
 relay_fee_recipient,         # ditto
 # Info we get about relays from Butta *TO COLLECT: fetch beaconcha and use jsdom to scrape?*
 beaconcha_mev_reward,        # our db: beaconcha/<slot>['mevReward']
-beaconcha_mev_reward_relay,  # our db: beaconcha/<slot>['mevRewardRelay']
+beaconcha_mev_reward_relay,  # our db: beaconcha/<slot>['mevRewardRelay'] (stored ;-separated)
 beaconcha_fee_recipient,     # our db: beaconcha/<slot>['feeRecipient']
 # Info we get about relays from Yokem *TO COLLECT: fetch from https://beta-data.mevmonitor.org/*
                              #         read json from filesystem - download and decompress as needed
 mevmonitor_max_bid,          # our db: mevmonitor/<slot>['maxBid']
-mevmonitor_max_bid_relay,    # our db: mevmonitor/<slot>['maxBidRelay']
+mevmonitor_max_bid_relay,    # our db: mevmonitor/<slot>['maxBidRelay'] (stored ;-separated)
 mevmonitor_mev_reward,       # our db: mevmonitor/<slot>['mevReward']
-mevmonitor_mev_reward_relay, # our db: mevmonitor/<slot>['mevRewardRelay']
-mevmonitor_fee_recipient     # our db: mevmonitor/<slot>['feeRecipient']
+mevmonitor_mev_reward_relay, # our db: mevmonitor/<slot>['mevRewardRelay'] (stored ;-separated)
+mevmonitor_fee_recipient     # our db: mevmonitor/<slot>['feeRecipient'] (stored ;-separated)
 */
-
-const fileName = `data/rockettheft_slot-${firstSlot}-to-${lastSlot}.csv`
-const outputFile = options.output ? createWriteStream(fileName) : null
-const write = options.output ? async s => new Promise(
-  resolve => outputFile.write(s) ? resolve() : outputFile.once('drain', resolve)
-) : s => null
-const endOut = options.output ? () => new Promise(resolve => outputFile.end(resolve)) : () => null
-if (options.output) console.log(`Writing to ${fileName}`)
-await write('slot,max_bid,max_bid_relay,mev_reward,mev_reward_relay,')
-await write('proposer_index,is_rocketpool,node_address,in_smoothing_pool,correct_fee_recipient,')
-await write('priority_fees,avg_fee,eth_collat_ratio\n')
 
 while (slotNumber <= lastSlot) {
   console.log(`${timestamp()}: Ensuring cache for ${slotNumber}`)
-  await populateCache(slotNumber)
-  await write(`${slotNumber},`)
+
+  await populateSlotInfo(slotNumber)
+
+  const slotKey = slotNumber.toString()
+  await write(`${slotKey},`)
   console.log(timestamp())
-  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotNumber.toString()]) || {}
+
+  const {blockNumber, proposerIndex, proposerPubkey, feeRecipient} = db.get([slotKey]) || {}
   if (typeof blockNumber == 'undefined') {
-    console.log(`Slot ${slotNumber}: Execution block missing`)
-    await write(',,,,,,,,,,,\n')
+    console.log(`Slot ${slotKey}: Execution block missing`)
+    await write('\n'.padStart(24, ','))
     slotNumber++
     continue
   }
-  let [maxBid, maxBidRelay] = ['', '']
-  for (const relayName of relayApiUrls.keys()) {
-    const relayBid = db.get([slotNumber.toString(), relayName, 'maxBid']) || ''
-    if (BigInt(relayBid) > BigInt(maxBid))
-      [maxBid, maxBidRelay] = [relayBid, relayName]
+  const {recipient: lastTxRecipient, value: lastTxValue} = await getLastTxInfo(blockNumber)
+  const priorityFees = await getPriorityFees(blockNumber)
+  await write(`${proposerIndex},${feeRecipient},${lastTxRecipient},${lastTxValue},${priorityFees},`)
+
+  // console.log(`${timestamp()} pp1`)
+
+  const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
+  const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
+  await write(`${isRocketpool},`)
+  if (isRocketpool) {
+    const {nodeAddress, inSmoothingPool, distributorAddress, avgFee} = await getNodeInfo(minipoolAddress, blockNumber)
+    const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
+    await write(`${nodeAddress},${distributorAddress},${inSmoothingPool},${avgFee},${ethCollatRatio},`)
   }
-  await write(`${maxBid},${maxBidRelay},`)
-  console.log(`Slot ${slotNumber}: Max bid ${ethers.formatEther(maxBid || '0')} ETH from ${maxBidRelay || '(none)'}`)
-  let [mevReward, mevRewardRelay, mevFeeRecipient] = ['', '', '']
+  else {
+    await write(',,,,,')
+  }
+
+  // console.log(`${timestamp()} pp2`)
+
+  let maxBid = ''
+  const maxBidRelays = []
+  for (const relayName of relayApiUrls.keys()) {
+    const relayBid = db.get([slotKey, relayName, 'maxBid']) || ''
+    if (BigInt(relayBid) > BigInt(maxBid)) {
+      maxBid = relayBid
+      maxBidRelays.splice(0, maxBidRelays.length, relayName)
+    }
+    else if (BigInt(relayBid) === BigInt(maxBid)) {
+      maxBidRelays.push(relayName)
+    }
+  }
+  await write(`${maxBid},${maxBidRelays.join(';')},`)
+  console.log(`Slot ${slotKey}: Max bid ${ethers.formatEther(maxBid || '0')} ETH from ${maxBidRelays.length ? maxBidRelays.join('; ') : '(none)'}`)
+  let [mevReward, mevFeeRecipient] = ['', '']
   const mevRewardRelays = []
   for (const relayName of relayApiUrls.keys()) {
-    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get([slotNumber.toString(), relayName, 'proposed']) || {}
+    const {mevReward: relayMevReward, feeRecipient: relayFeeRecipient} = db.get([slotKey, relayName, 'proposed']) || {}
     if (relayFeeRecipient || relayMevReward) {
-      if ((mevReward || mevRewardRelay || mevFeeRecipient) && mevReward != relayMevReward) {
-        console.error(`Slot ${slotNumber}: Duplicate MEV reward ${mevRewardRelay} for ${
-          ethers.formatEther(mevReward || '0')} vs ${relayName} for ${
-          ethers.formatEther(relayMevReward || '0')}`)
+      if ((mevReward || mevFeeRecipient || mevRewardRelays.length) &&
+          (mevReward != relayMevReward || mevFeeRecipient != relayFeeRecipient)) {
+        console.error(`Slot ${slotKey}: Duplicate MEV reward ${mevRewardRelay} for ${
+          ethers.formatEther(mevReward || '0')} via ${mevFeeRecipient} vs ${relayName} for ${
+          ethers.formatEther(relayMevReward || '0')} via ${relayFeeRecipient}`)
         await endOut()
         process.exit(1)
       }
-      [mevReward, mevRewardRelay, mevFeeRecipient] = [relayMevReward, relayName, relayFeeRecipient]
-      mevRewardRelays.push(mevRewardRelay)
+      else {
+        [mevReward, mevFeeRecipient] = [relayMevReward, relayFeeRecipient]
+      }
+      mevRewardRelays.push(relayName)
     }
   }
-  await write(`${mevReward},${mevRewardRelays.join(';')},`)
-  console.log(`Slot ${slotNumber}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
-    mevRewardRelay ? mevRewardRelay.concat(' via ', mevFeeRecipient) : '(none)'}`)
-  const minipoolAddress = await getMinipoolByPubkey(proposerPubkey, blockNumber)
-  const isRocketpool = minipoolAddress != nullAddress && await isMinipoolStaking(minipoolAddress, blockNumber)
-  await write(`${proposerIndex},${isRocketpool},`)
-  console.log(`Slot ${slotNumber}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
-  if (isRocketpool) {
-    const {nodeAddress, inSmoothingPool, correctFeeRecipient, avgFee} = await getCorrectFeeRecipientAndNodeFee(minipoolAddress, blockNumber)
-    const effectiveFeeRecipient = mevFeeRecipient || feeRecipient
-    console.log(`mevFeeRecipient: ${mevFeeRecipient}, feeRecipient: ${feeRecipient}`)
-    const hasCorrectFeeRecipient = effectiveFeeRecipient == correctFeeRecipient
-    const priorityFees = mevReward ? '' : await getPriorityFees(blockNumber)
-    const ethCollatRatio = await getEthCollatRatio(nodeAddress, blockNumber)
-    await write(`${nodeAddress},${inSmoothingPool},${hasCorrectFeeRecipient},${priorityFees},${avgFee},${ethCollatRatio}\n`)
-    console.log(`Slot ${slotNumber}: Correct fee recipient ${hasCorrectFeeRecipient} (${effectiveFeeRecipient} ${hasCorrectFeeRecipient ? '=' : '≠'} ${correctFeeRecipient})`)
-    console.log(`Slot ${slotNumber}: Average fee ${ethers.formatEther(avgFee)}, ETH collat ${ethers.formatEther(ethCollatRatio)}`)
-    if (priorityFees) console.log(`Slot ${slotNumber}: Priority fees ${ethers.formatEther(priorityFees)} ETH`)
-  }
-  else {
-    await write(',,,,,\n')
-  }
+
+  // console.log(`${timestamp()} pp3`)
+
+  await write(`${mevReward},${mevRewardRelays.join(';')},${mevFeeRecipient},`)
+  console.log(`Slot ${slotKey}: MEV reward ${ethers.formatEther(mevReward || '0')} ETH from ${
+    mevRewardRelays.length ? mevRewardRelays.join('; ').concat(` via ${mevFeeRecipient}`) : '(none)'}`)
+  console.log(`Slot ${slotKey}: Proposer ${proposerIndex.toString().padStart(7)} ${proposerPubkey} (${isRocketpool ? 'RP' : 'not RP'})`)
+
+  const {mevReward: bcReward, mevRewardRelay: bcRelays, feeRecipient: bcFeeRecipient } = await getBeaconchaInfo(slotKey, blockNumber)
+  await write(`${bcReward},${bcRelays},${bcFeeRecipient},`)
+
+  // mevmonitor
+  const {maxBid: mmBid, maxBidRelay: mmBidRelays, mevReward: mmReward, mevRewardRelay: mmRelays, feeRecipient: mmFeeRecipient} = await getMevMonitorInfo(slotNumber)
+  await write(`${mmBid},${mmBidRelays},${mmReward},${mmRelays},${mmFeeRecipient}\n`)
+
   slotNumber++
 }
 await endOut()
