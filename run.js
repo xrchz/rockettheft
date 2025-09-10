@@ -48,7 +48,7 @@ relayApiUrls.set('Ultra Sound',
 relayApiUrls.set('Ultra Sound Filtered',
   {
     url: 'https://0xa1559ace749633b997cb3fdacffb890aeebdb0f5a3b6aaa7eeeaf1a38af0a8fe88b9e4b1f61f236d2e64d95733327a62@relay-filtered.ultrasound.money',
-    startSlot: 22927632,
+    startSlot: 12149603,
     endSlot: Infinity
   })
 relayApiUrls.set('Aestus',
@@ -72,7 +72,7 @@ relayApiUrls.set('Titan Regional',
 relayApiUrls.set('BTCS OFAC+',
   {
     url: 'https://0xb66921e917a8f4cfc3c52e10c1e5c77b1255693d9e6ed6f5f444b71ca4bb610f2eff4fa98178efbf4dd43a30472c497e@relay.btcs.com',
-    startSlot: 22927632,
+    startSlot: 12149603,
     endSlot: Infinity
   })
 
